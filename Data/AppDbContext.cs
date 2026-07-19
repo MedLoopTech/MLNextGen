@@ -137,6 +137,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         builder.Entity<Order>(entity =>
         {
             entity.Property(o => o.Status).HasConversion<string>().HasMaxLength(32);
+            entity.Property(o => o.DisputeRaisedBy).HasConversion<string>().HasMaxLength(16);
+            entity.Property(o => o.Resolution).HasConversion<string>().HasMaxLength(32);
 
             entity.HasOne(o => o.Bid)
                 .WithMany()

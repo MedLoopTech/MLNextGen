@@ -204,4 +204,132 @@ public class OrdersController : ControllerBase
             return Conflict("This order could not be completed due to a concurrent update — please retry.");
         }
     }
+
+    // Seller confirms they've shipped/handed over the goods. Only the
+    // selling pharmacy can do this, and only from Paid — replaces the
+    // legacy B2BOrderModel.FulfillmentStatus string, which any code path
+    // could set to anything with no ownership check and no state machine.
+    [HttpPut("{id}/fulfill")]
+    public async Task<IActionResult> Fulfill(string id)
+    {
+        var user = await _userManager.GetUserAsync(User);
+        var order = await _db.Orders.FindAsync(id);
+
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        if (user?.PharmacyId != order.SellerPharmacyId)
+        {
+            return Forbid();
+        }
+
+        if (order.Status != OrderStatus.Paid)
+        {
+            return BadRequest("Only paid orders can be marked fulfilled.");
+        }
+
+        order.Status = OrderStatus.Fulfilled;
+        order.FulfilledAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    public record RaiseDisputeRequest(string Reason);
+
+    // Either party can raise a dispute on a paid or fulfilled order — e.g.
+    // wrong quantity received, damaged goods, seller never shipped. This
+    // replaces the legacy app's free-floating BuyerComments/
+    // SellerDisputeComment fields (which anyone could set, with no actual
+    // "this order is now disputed" state) with a real status transition.
+    [HttpPut("{id}/dispute")]
+    public async Task<IActionResult> RaiseDispute(string id, [FromBody] RaiseDisputeRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            return BadRequest("A dispute reason is required.");
+        }
+
+        var user = await _userManager.GetUserAsync(User);
+        var order = await _db.Orders.FindAsync(id);
+
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        OrderParty party;
+        if (user?.PharmacyId == order.BuyerPharmacyId)
+        {
+            party = OrderParty.Buyer;
+        }
+        else if (user?.PharmacyId == order.SellerPharmacyId)
+        {
+            party = OrderParty.Seller;
+        }
+        else
+        {
+            return Forbid();
+        }
+
+        if (order.Status is not (OrderStatus.Paid or OrderStatus.Fulfilled))
+        {
+            return BadRequest("Only paid or fulfilled orders can be disputed.");
+        }
+
+        order.Status = OrderStatus.Disputed;
+        order.DisputeRaisedBy = party;
+        order.DisputeReason = request.Reason;
+        order.DisputeRaisedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    public record ResolveDisputeRequest(DisputeResolution Resolution, string Notes);
+
+    // Admin-only: closes out a dispute one way or the other. Deliberately
+    // not left to either party to self-resolve — that's what makes it a
+    // dispute rather than a negotiation.
+    [HttpPut("{id}/resolve-dispute")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> ResolveDispute(string id, [FromBody] ResolveDisputeRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Notes))
+        {
+            return BadRequest("Resolution notes are required.");
+        }
+
+        var order = await _db.Orders.FindAsync(id);
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        if (order.Status != OrderStatus.Disputed)
+        {
+            return BadRequest("Only disputed orders can be resolved.");
+        }
+
+        order.Resolution = request.Resolution;
+        order.ResolutionNotes = request.Notes;
+        order.ResolvedAt = DateTime.UtcNow;
+        order.Status = request.Resolution == DisputeResolution.UpheldRefunded
+            ? OrderStatus.Refunded
+            : OrderStatus.Fulfilled;
+
+        // NOTE: this only changes the order's status — it does not call any
+        // payment gateway refund/void API. IPaymentGateway currently has no
+        // RefundAsync method because MockPaymentGateway never actually
+        // charged anything. Before this goes live with a real gateway, a
+        // refund must be wired in here (or in a separate step this action
+        // triggers), or "Refunded" orders will silently not actually be
+        // refunded — the same category of bug as the legacy app's payment
+        // stub, just moved to a different endpoint.
+        await _db.SaveChangesAsync();
+
+        return NoContent();
+    }
 }

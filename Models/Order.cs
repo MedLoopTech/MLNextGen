@@ -8,6 +8,18 @@ public enum OrderStatus
     Refunded
 }
 
+public enum OrderParty
+{
+    Buyer,
+    Seller
+}
+
+public enum DisputeResolution
+{
+    UpheldOrderStands,   // dispute investigated, order confirmed as fulfilled correctly
+    UpheldRefunded       // dispute investigated, buyer was right — refunded
+}
+
 // Created only by OrdersController.Checkout, once a real (or mock) payment
 // gateway charge has actually succeeded — never speculatively, and never
 // with a client-supplied amount.
@@ -37,4 +49,17 @@ public class Order
     public string? PaymentReference { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? FulfilledAt { get; set; }
+
+    // Dispute fields — replaces the legacy B2BOrderModel's four separate
+    // buyer/seller comment+image fields with a single structured record of
+    // who raised it, why, and (once resolved) what the outcome was, rather
+    // than free-floating text fields with no state machine behind them.
+    public OrderParty? DisputeRaisedBy { get; set; }
+    public string? DisputeReason { get; set; }
+    public DateTime? DisputeRaisedAt { get; set; }
+
+    public DisputeResolution? Resolution { get; set; }
+    public string? ResolutionNotes { get; set; }
+    public DateTime? ResolvedAt { get; set; }
 }

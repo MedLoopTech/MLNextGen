@@ -41,8 +41,14 @@ A bid isn't just accept-or-reject — either side can propose new terms back, pi
 - Checkout is wrapped in a DB transaction: the gateway is charged first, then stock is decremented and the `Order` is created atomically — if either fails, the whole thing rolls back. A unique index on `Order.BidId` makes it impossible to create two paid orders for the same bid even under a race, on top of the app-level check.
 - Known, documented gap (see the comment on `OrdersController.Checkout`): if the gateway charge succeeds but the DB commit fails, there's currently no automatic refund/reconciliation. That's an explicit TODO to solve *before* swapping in a real (non-mock) gateway — not something to discover in production.
 
+### Order fulfillment and disputes
+- `PUT /api/orders/{id}/fulfill` — the selling pharmacy confirms shipment; only valid from `Paid`, ownership-checked (only that order's seller can call it).
+- `PUT /api/orders/{id}/dispute` — either the buyer or the seller can raise a dispute with a reason, valid from `Paid` or `Fulfilled`. Replaces the legacy `B2BOrderModel`'s free-floating `BuyerComments`/`SellerDisputeComment` fields — which anyone could set with no real "this order is now disputed" state behind them — with an actual status transition (`OrderStatus.Disputed`) and a recorded `DisputeRaisedBy`/`DisputeReason`/`DisputeRaisedAt`.
+- `PUT /api/orders/{id}/resolve-dispute` — **admin-only** (`[Authorize(Roles = "Admin")]`), deliberately not left to either party to self-resolve. Resolves to either `Fulfilled` (dispute didn't hold up) or `Refunded` (it did).
+- Honest limitation, documented directly in the code: resolving a dispute as `Refunded` only changes the order's status — `IPaymentGateway` has no `RefundAsync` yet, because `MockPaymentGateway` never actually charged anything to refund. Before this goes live against a real gateway, an actual refund call needs to be wired into that endpoint, or "Refunded" orders would silently not be refunded — the same class of bug as the legacy payment stub, just relocated.
+
 ## What's deliberately NOT here yet
-PDF/invoice generation, email, scheduled jobs, the POS module, order fulfillment/dispute tracking, and the long-tail collections (notifications, feedback, rewards, promo codes, appointments, disposer/technician/distributor workflows). Those get added incrementally per the phased migration plan. A **real** payment gateway integration (replacing `MockPaymentGateway`) is also still pending — see the reconciliation gap noted above before that swap happens.
+PDF/invoice generation, email, scheduled jobs, the POS module, and the long-tail collections (notifications, feedback, rewards, promo codes, appointments, disposer/technician/distributor workflows). Those get added incrementally per the phased migration plan. A **real** payment gateway integration (replacing `MockPaymentGateway`, and adding an actual refund path) is also still pending — see the gaps noted above before that swap happens.
 
 ## Running locally
 ```bash
