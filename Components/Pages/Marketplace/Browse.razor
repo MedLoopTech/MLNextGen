@@ -5,53 +5,107 @@
 @inject UserManager<ApplicationUser> UserManager
 @using Microsoft.EntityFrameworkCore
 
-<PageTitle>Marketplace — MedLoop</PageTitle>
+<PageTitle>Marketplace — MedLoop NextGen</PageTitle>
 
-<h3 class="mb-3">Marketplace</h3>
-<p class="text-muted">Listings other pharmacies have made available for redistribution.</p>
+<div class="page-header d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+    <div>
+        <h3 class="mb-1">Marketplace</h3>
+        <p class="text-muted mb-0">Listings other pharmacies have made available for redistribution.</p>
+    </div>
+    <div style="min-width: 260px;">
+        <input type="search" class="form-control" placeholder="Search product or manufacturer…"
+               @bind="_search" @bind:event="oninput" aria-label="Search listings" />
+    </div>
+</div>
 
 @if (_loading)
 {
-    <p>Loading…</p>
+    <LoadingIndicator Text="Loading listings…" />
 }
-else if (_listings.Count == 0)
+else if (Filtered.Count == 0)
 {
-    <p>No listings available right now.</p>
+    <div class="ml-panel card">
+        @if (_listings.Count == 0)
+        {
+            <EmptyState Icon="🏷" Title="No listings available right now"
+                        Subtitle="When another pharmacy marks stock for redistribution, it will show up here." />
+        }
+        else
+        {
+            <EmptyState Icon="🔍" Title="No listings match your search"
+                        Subtitle="Try a different product name or manufacturer." />
+        }
+    </div>
 }
 else
 {
-    <table class="table table-striped align-middle">
-        <thead>
-            <tr>
-                <th>Product</th>
-                <th>Pharmacy</th>
-                <th>Manufacturer</th>
-                <th>Expiry</th>
-                <th>Available</th>
-                <th>Price</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var product in _listings)
-            {
-                <tr>
-                    <td>@product.Name</td>
-                    <td>@(product.Pharmacy?.Name ?? product.PharmacyId)</td>
-                    <td>@product.Manufacturer</td>
-                    <td>@(product.ExpiryDate?.ToString("yyyy-MM-dd") ?? "—")</td>
-                    <td>@product.AvailableQuantity</td>
-                    <td>@(product.Price?.ToString("C") ?? "—")</td>
-                    <td><a class="btn btn-sm btn-primary" href="@($"/marketplace/{product.Id}")">View &amp; bid</a></td>
-                </tr>
-            }
-        </tbody>
-    </table>
+    <div class="ml-panel card">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>Product</th>
+                        <th>Pharmacy</th>
+                        <th>Manufacturer</th>
+                        <th>Expiry</th>
+                        <th class="text-end">Available</th>
+                        <th class="text-end">List price</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var product in Filtered)
+                    {
+                        <tr>
+                            <td class="fw-semibold">@product.Name</td>
+                            <td>@(product.Pharmacy?.Name ?? product.PharmacyId)</td>
+                            <td>@(product.Manufacturer ?? "—")</td>
+                            <td>
+                                @if (product.ExpiryDate is null)
+                                {
+                                    <span>—</span>
+                                }
+                                else
+                                {
+                                    <span class="@ExpiryClass(product)">@product.ExpiryDate.Value.ToString("yyyy-MM-dd")</span>
+                                    @if (product.DaysUntilExpiry is int days and <= 90)
+                                    {
+                                        <div class="small text-muted">@days days left</div>
+                                    }
+                                }
+                            </td>
+                            <td class="text-end">@product.AvailableQuantity</td>
+                            <td class="text-end">@(product.Price?.ToString("C") ?? "—")</td>
+                            <td class="text-end">
+                                <a class="btn btn-sm btn-primary" href="@($"/marketplace/{product.Id}")">View &amp; bid</a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
 }
 
 @code {
     private List<Product> _listings = new();
     private bool _loading = true;
+    private string _search = string.Empty;
+
+    private List<Product> Filtered => string.IsNullOrWhiteSpace(_search)
+        ? _listings
+        : _listings.Where(p =>
+                p.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+                (p.Manufacturer?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (p.Pharmacy?.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false))
+            .ToList();
+
+    private static string ExpiryClass(Product product) => product.DaysUntilExpiry switch
+    {
+        <= 30 => "expiry-soon",
+        <= 90 => "expiry-near",
+        _ => ""
+    };
 
     [CascadingParameter]
     private Task<AuthenticationState>? AuthState { get; set; }

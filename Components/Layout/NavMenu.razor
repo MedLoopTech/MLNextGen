@@ -1,33 +1,47 @@
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark px-3">
-    <a class="navbar-brand" href="/">MedLoop NextGen</a>
+<nav class="navbar navbar-expand-lg navbar-dark ml-navbar px-3">
+    <a class="navbar-brand d-flex align-items-center" href="/">
+        <span class="brand-mark" aria-hidden="true">M</span>
+        MedLoop <span class="fw-light ms-1">NextGen</span>
+    </a>
 
-    <div class="collapse navbar-collapse">
-        <ul class="navbar-nav me-auto">
+    @* The toggler was missing entirely in the first cut of this navbar,
+       which made every nav link unreachable below the lg breakpoint. It
+       needs Bootstrap's JS bundle (loaded in App.razor) to operate. *@
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav"
+            aria-controls="mainNav" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+    </button>
+
+    <div class="collapse navbar-collapse" id="mainNav">
+        <ul class="navbar-nav me-auto gap-lg-1">
             <AuthorizeView>
                 <Authorized>
-                    <li class="nav-item"><a class="nav-link" href="/marketplace">Marketplace</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/bids/mine">My Bids</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/bids/incoming">Incoming Bids</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/orders/mine">My Orders</a></li>
+                    <li class="nav-item"><NavLink class="nav-link" href="/marketplace">Marketplace</NavLink></li>
+                    <li class="nav-item"><NavLink class="nav-link" href="/bids/mine">My Bids</NavLink></li>
+                    <li class="nav-item"><NavLink class="nav-link" href="/bids/incoming">Incoming Bids</NavLink></li>
+                    <li class="nav-item"><NavLink class="nav-link" href="/orders/mine">Orders</NavLink></li>
                 </Authorized>
             </AuthorizeView>
         </ul>
 
-        <ul class="navbar-nav">
+        <ul class="navbar-nav align-items-lg-center">
             <AuthorizeView>
                 <Authorized>
-                    <li class="nav-item d-flex align-items-center text-light me-2">
-                        <small>@context.User.Identity?.Name</small>
+                    <li class="nav-item me-lg-3 py-2 py-lg-0">
+                        <span class="text-light opacity-75 small">@context.User.Identity?.Name</span>
                     </li>
                     <li class="nav-item">
                         <form method="post" action="/account/logout">
+                            <AntiforgeryToken />
                             <button type="submit" class="btn btn-outline-light btn-sm">Log out</button>
                         </form>
                     </li>
                 </Authorized>
                 <NotAuthorized>
-                    <li class="nav-item"><a class="nav-link" href="/account/login">Log in</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/account/register">Register</a></li>
+                    <li class="nav-item"><NavLink class="nav-link" href="/account/login">Log in</NavLink></li>
+                    <li class="nav-item ms-lg-2">
+                        <a class="btn btn-sm text-dark fw-semibold" style="background: var(--ml-accent);" href="/account/register">Register</a>
+                    </li>
                 </NotAuthorized>
             </AuthorizeView>
         </ul>

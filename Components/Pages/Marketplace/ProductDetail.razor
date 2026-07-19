@@ -7,64 +7,115 @@
 @inject NavigationManager Nav
 @using Microsoft.EntityFrameworkCore
 
-<PageTitle>@(_product?.Name ?? "Product") — MedLoop</PageTitle>
+<PageTitle>@(_product?.Name ?? "Product") — MedLoop NextGen</PageTitle>
 
 @if (_loading)
 {
-    <p>Loading…</p>
+    <LoadingIndicator Text="Loading listing…" />
 }
 else if (_product is null)
 {
-    <p>Listing not found.</p>
+    <div class="ml-panel card">
+        <EmptyState Icon="🔍" Title="Listing not found"
+                    Subtitle="It may have been sold, withdrawn, or expired.">
+            <a class="btn btn-primary btn-sm" href="/marketplace">Back to marketplace</a>
+        </EmptyState>
+    </div>
 }
 else
 {
-    <div class="row">
-        <div class="col-md-7">
-            <h3>@_product.Name</h3>
-            <dl class="row">
-                <dt class="col-sm-4">Seller</dt><dd class="col-sm-8">@(_product.Pharmacy?.Name ?? _product.PharmacyId)</dd>
-                <dt class="col-sm-4">Manufacturer</dt><dd class="col-sm-8">@_product.Manufacturer</dd>
-                <dt class="col-sm-4">Dosage form</dt><dd class="col-sm-8">@_product.DosageForm</dd>
-                <dt class="col-sm-4">Batch</dt><dd class="col-sm-8">@_product.BatchNumber</dd>
-                <dt class="col-sm-4">Expiry</dt><dd class="col-sm-8">@(_product.ExpiryDate?.ToString("yyyy-MM-dd") ?? "—")</dd>
-                <dt class="col-sm-4">Available quantity</dt><dd class="col-sm-8">@_product.AvailableQuantity</dd>
-                <dt class="col-sm-4">List price</dt><dd class="col-sm-8">@(_product.Price?.ToString("C") ?? "—") / unit</dd>
-            </dl>
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb mb-0">
+            <li class="breadcrumb-item"><a href="/marketplace">Marketplace</a></li>
+            <li class="breadcrumb-item active" aria-current="page">@_product.Name</li>
+        </ol>
+    </nav>
+
+    <div class="row g-4">
+        <div class="col-lg-7">
+            <div class="ml-panel card">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <h3 class="mb-0">@_product.Name</h3>
+                        @if (_product.DaysUntilExpiry is int days and <= 90)
+                        {
+                            <span class="badge status-badge @(days <= 30 ? "text-bg-danger" : "text-bg-warning")">
+                                Expires in @days days
+                            </span>
+                        }
+                    </div>
+
+                    <dl class="row mb-0">
+                        <dt class="col-sm-4 text-muted fw-normal">Seller</dt>
+                        <dd class="col-sm-8">@(_product.Pharmacy?.Name ?? _product.PharmacyId)</dd>
+                        <dt class="col-sm-4 text-muted fw-normal">Manufacturer</dt>
+                        <dd class="col-sm-8">@(_product.Manufacturer ?? "—")</dd>
+                        <dt class="col-sm-4 text-muted fw-normal">Dosage form</dt>
+                        <dd class="col-sm-8">@(_product.DosageForm ?? "—")</dd>
+                        <dt class="col-sm-4 text-muted fw-normal">Batch</dt>
+                        <dd class="col-sm-8">@(_product.BatchNumber ?? "—")</dd>
+                        <dt class="col-sm-4 text-muted fw-normal">Expiry</dt>
+                        <dd class="col-sm-8">@(_product.ExpiryDate?.ToString("yyyy-MM-dd") ?? "—")</dd>
+                        <dt class="col-sm-4 text-muted fw-normal">Available quantity</dt>
+                        <dd class="col-sm-8">@_product.AvailableQuantity units</dd>
+                        <dt class="col-sm-4 text-muted fw-normal">List price</dt>
+                        <dd class="col-sm-8 fw-semibold">@(_product.Price?.ToString("C") ?? "—") <span class="fw-normal text-muted">/ unit</span></dd>
+                    </dl>
+                </div>
+            </div>
         </div>
 
-        <div class="col-md-5">
+        <div class="col-lg-5">
             @if (_isOwnListing)
             {
                 <div class="alert alert-info">This is your own pharmacy's listing.</div>
             }
             else if (_hasOpenBid)
             {
-                <div class="alert alert-info">You already have an open bid/negotiation on this listing — see <a href="/bids/mine">My Bids</a>.</div>
+                <div class="alert alert-info">
+                    You already have an open bid/negotiation on this listing — see <a href="/bids/mine" class="alert-link">My Bids</a>.
+                </div>
             }
             else
             {
-                <div class="card">
+                <div class="ml-panel card">
                     <div class="card-header">Place a bid</div>
                     <div class="card-body">
                         @if (!string.IsNullOrEmpty(_error))
                         {
-                            <div class="alert alert-danger">@_error</div>
+                            <div class="alert alert-danger" role="alert">@_error</div>
                         }
                         <EditForm Model="_form" OnValidSubmit="SubmitBid">
                             <div class="mb-3">
                                 <label class="form-label">Quantity</label>
-                                <InputNumber class="form-control" @bind-Value="_form.Quantity" />
+                                <InputNumber class="form-control" @bind-Value="_form.Quantity" min="1" max="@_product.AvailableQuantity" />
+                                <div class="form-text">Up to @_product.AvailableQuantity units.</div>
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">Price per unit</label>
-                                <InputNumber class="form-control" @bind-Value="_form.PricePerUnit" />
+                                <div class="input-group">
+                                    <InputNumber class="form-control" @bind-Value="_form.PricePerUnit" step="0.01" min="0.01" />
+                                    <span class="input-group-text">/ unit</span>
+                                </div>
                             </div>
                             <div class="mb-3">
-                                <label class="form-label">Message (optional)</label>
-                                <InputTextArea class="form-control" @bind-Value="_form.Message" />
+                                <label class="form-label">Message <span class="text-muted fw-normal">(optional)</span></label>
+                                <InputTextArea class="form-control" rows="2" @bind-Value="_form.Message"
+                                               placeholder="Anything the seller should know" />
                             </div>
-                            <button type="submit" class="btn btn-primary w-100">Send offer</button>
+
+                            <div class="d-flex justify-content-between border-top pt-3 mb-3">
+                                <span class="text-muted">Offer total</span>
+                                <span class="fw-bold">@((_form.Quantity * _form.PricePerUnit).ToString("C"))</span>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary w-100" disabled="@_submitting">
+                                @if (_submitting)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                                }
+                                Send offer
+                            </button>
                         </EditForm>
                     </div>
                 </div>
@@ -84,6 +135,7 @@ else
     private bool _loading = true;
     private bool _isOwnListing;
     private bool _hasOpenBid;
+    private bool _submitting;
     private string? _error;
     private readonly BidForm _form = new();
 
@@ -124,6 +176,11 @@ else
     // directly rather than the REST API).
     private async Task SubmitBid()
     {
+        if (_submitting)
+        {
+            return;
+        }
+
         _error = null;
 
         if (_user?.PharmacyId is null || _product is null)
@@ -144,35 +201,43 @@ else
             return;
         }
 
-        var bid = new Bid
+        _submitting = true;
+        try
         {
-            ProductId = _product.Id,
-            BuyerPharmacyId = _user.PharmacyId,
-            BuyerUserId = _user.Id,
-            OfferQuantity = _form.Quantity,
-            OfferPricePerUnit = _form.PricePerUnit,
-            Message = _form.Message,
-            LastProposedBy = NegotiationParty.Buyer
-        };
+            var bid = new Bid
+            {
+                ProductId = _product.Id,
+                BuyerPharmacyId = _user.PharmacyId,
+                BuyerUserId = _user.Id,
+                OfferQuantity = _form.Quantity,
+                OfferPricePerUnit = _form.PricePerUnit,
+                Message = _form.Message,
+                LastProposedBy = NegotiationParty.Buyer
+            };
 
-        Db.Bids.Add(bid);
-        Db.BidNegotiationRounds.Add(new BidNegotiationRound
+            Db.Bids.Add(bid);
+            Db.BidNegotiationRounds.Add(new BidNegotiationRound
+            {
+                BidId = bid.Id,
+                ProposedBy = NegotiationParty.Buyer,
+                ProposedByUserId = _user.Id,
+                Quantity = bid.OfferQuantity,
+                PricePerUnit = bid.OfferPricePerUnit,
+                Message = bid.Message
+            });
+
+            await Db.SaveChangesAsync();
+
+            await Notifications.NotifyPharmacyAsync(
+                _product.PharmacyId,
+                "New bid received",
+                $"A bid was placed on {_product.Name}: {bid.OfferQuantity} units at {bid.OfferPricePerUnit:C} each.");
+
+            Nav.NavigateTo("/bids/mine");
+        }
+        finally
         {
-            BidId = bid.Id,
-            ProposedBy = NegotiationParty.Buyer,
-            ProposedByUserId = _user.Id,
-            Quantity = bid.OfferQuantity,
-            PricePerUnit = bid.OfferPricePerUnit,
-            Message = bid.Message
-        });
-
-        await Db.SaveChangesAsync();
-
-        await Notifications.NotifyPharmacyAsync(
-            _product.PharmacyId,
-            "New bid received",
-            $"A bid was placed on {_product.Name}: {bid.OfferQuantity} units at {bid.OfferPricePerUnit:C} each.");
-
-        Nav.NavigateTo("/bids/mine");
+            _submitting = false;
+        }
     }
 }

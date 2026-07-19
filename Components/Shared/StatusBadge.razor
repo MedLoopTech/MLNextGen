@@ -1,0 +1,37 @@
+@* One place that decides how a Bid/Order status looks, instead of every
+   table hardcoding badge colors that would drift apart. Renders fine in
+   both static and interactive render modes (no state, no handlers). *@
+<span class="badge status-badge @CssClass">@Label</span>
+
+@code {
+    [Parameter, EditorRequired]
+    public object? Status { get; set; }
+
+    private string Label => Status switch
+    {
+        BidStatus.Pending => "Awaiting seller",
+        BidStatus.CounteredBySeller => "Seller countered",
+        BidStatus.CounteredByBuyer => "Buyer countered",
+        BidStatus.Approved => "Approved",
+        BidStatus.Rejected => "Rejected",
+        BidStatus.Cancelled => "Withdrawn",
+        BidStatus.PaymentCompleted => "Paid",
+        OrderStatus s => s.ToString(),
+        null => "—",
+        _ => Status.ToString() ?? "—"
+    };
+
+    private string CssClass => Status switch
+    {
+        BidStatus.Pending or BidStatus.CounteredBySeller or BidStatus.CounteredByBuyer => "text-bg-warning",
+        BidStatus.Approved => "text-bg-info",
+        BidStatus.PaymentCompleted => "text-bg-success",
+        BidStatus.Rejected => "text-bg-danger",
+        BidStatus.Cancelled => "text-bg-secondary",
+        OrderStatus.Paid => "text-bg-info",
+        OrderStatus.Fulfilled => "text-bg-success",
+        OrderStatus.Disputed => "text-bg-danger",
+        OrderStatus.Refunded => "text-bg-secondary",
+        _ => "text-bg-secondary"
+    };
+}

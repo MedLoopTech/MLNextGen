@@ -6,49 +6,115 @@
 @inject INotificationService Notifications
 @using Microsoft.EntityFrameworkCore
 
-<PageTitle>Order — MedLoop</PageTitle>
+<PageTitle>Order — MedLoop NextGen</PageTitle>
 
 @if (_loading)
 {
-    <p>Loading…</p>
+    <LoadingIndicator Text="Loading order…" />
 }
 else if (_order is null)
 {
-    <p>Order not found.</p>
+    <div class="ml-panel card">
+        <EmptyState Icon="🔍" Title="Order not found">
+            <a class="btn btn-primary btn-sm" href="/orders/mine">Back to orders</a>
+        </EmptyState>
+    </div>
 }
 else if (!_isParty)
 {
-    <p>You don't have access to this order.</p>
+    <div class="ml-panel card">
+        <EmptyState Icon="🔒" Title="You don't have access to this order"
+                    Subtitle="Only the buying and selling pharmacies can view it." />
+    </div>
 }
 else
 {
-    <h3>Order — @(_order.Product?.Name ?? _order.ProductId)</h3>
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb mb-0">
+            <li class="breadcrumb-item"><a href="/orders/mine">Orders</a></li>
+            <li class="breadcrumb-item active" aria-current="page">@(_order.Product?.Name ?? _order.ProductId)</li>
+        </ol>
+    </nav>
 
-    <dl class="row">
-        <dt class="col-sm-3">Seller</dt><dd class="col-sm-9">@(_order.SellerPharmacy?.Name ?? _order.SellerPharmacyId)</dd>
-        <dt class="col-sm-3">Buyer</dt><dd class="col-sm-9">@(_order.BuyerPharmacy?.Name ?? _order.BuyerPharmacyId)</dd>
-        <dt class="col-sm-3">Quantity</dt><dd class="col-sm-9">@_order.Quantity</dd>
-        <dt class="col-sm-3">Unit price</dt><dd class="col-sm-9">@_order.UnitPrice.ToString("C")</dd>
-        @if (_order.DiscountAmount > 0)
-        {
-            <dt class="col-sm-3">Discount</dt><dd class="col-sm-9">-@_order.DiscountAmount.ToString("C")</dd>
-        }
-        <dt class="col-sm-3">Platform fee</dt><dd class="col-sm-9">@_order.PlatformFeeAmount.ToString("C")</dd>
-        <dt class="col-sm-3">Total</dt><dd class="col-sm-9 fw-bold">@_order.TotalAmount.ToString("C")</dd>
-        <dt class="col-sm-3">Status</dt><dd class="col-sm-9"><span class="badge bg-secondary">@_order.Status</span></dd>
-    </dl>
-
-    <a class="btn btn-outline-secondary mb-3" href="@($"/api/orders/{_order.Id}/invoice")" target="_blank">Download invoice (PDF)</a>
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <h3 class="mb-0">Order — @(_order.Product?.Name ?? _order.ProductId)</h3>
+        <StatusBadge Status="_order.Status" />
+    </div>
 
     @if (!string.IsNullOrEmpty(_message))
     {
-        <div class="alert alert-info">@_message</div>
+        <div class="alert alert-info" role="alert">@_message</div>
     }
+
+    <div class="row g-4 mb-4">
+        <div class="col-lg-7">
+            <div class="ml-panel card h-100">
+                <div class="card-header">Order details</div>
+                <div class="card-body">
+                    <dl class="row mb-0">
+                        <dt class="col-sm-4 text-muted fw-normal">Seller</dt>
+                        <dd class="col-sm-8">@(_order.SellerPharmacy?.Name ?? _order.SellerPharmacyId)</dd>
+                        <dt class="col-sm-4 text-muted fw-normal">Buyer</dt>
+                        <dd class="col-sm-8">@(_order.BuyerPharmacy?.Name ?? _order.BuyerPharmacyId)</dd>
+                        <dt class="col-sm-4 text-muted fw-normal">Placed</dt>
+                        <dd class="col-sm-8">@_order.CreatedAt.ToString("yyyy-MM-dd HH:mm") UTC</dd>
+                        @if (_order.FulfilledAt is not null)
+                        {
+                            <dt class="col-sm-4 text-muted fw-normal">Fulfilled</dt>
+                            <dd class="col-sm-8">@_order.FulfilledAt.Value.ToString("yyyy-MM-dd HH:mm") UTC</dd>
+                        }
+                        <dt class="col-sm-4 text-muted fw-normal">Payment reference</dt>
+                        <dd class="col-sm-8"><code>@_order.PaymentReference</code></dd>
+                    </dl>
+
+                    @if (_order.Status == OrderStatus.Disputed)
+                    {
+                        <div class="alert alert-danger mt-3 mb-0">
+                            <strong>Dispute raised by the @_order.DisputeRaisedBy?.ToString()?.ToLowerInvariant()</strong>
+                            (@_order.DisputeRaisedAt?.ToString("yyyy-MM-dd")): @_order.DisputeReason
+                            <div class="small mt-1">An administrator will review and resolve this dispute.</div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-5">
+            <div class="ml-panel card h-100">
+                <div class="card-header">Payment summary</div>
+                <div class="card-body">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">@_order.Quantity × @_order.UnitPrice.ToString("C")</span>
+                        <span>@((_order.Quantity * _order.UnitPrice).ToString("C"))</span>
+                    </div>
+                    @if (_order.DiscountAmount > 0)
+                    {
+                        <div class="d-flex justify-content-between mb-2 text-success">
+                            <span>Discount</span>
+                            <span>-@_order.DiscountAmount.ToString("C")</span>
+                        </div>
+                    }
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">Platform fee (@((_order.PlatformFeeRate * 100).ToString("0.#"))%)</span>
+                        <span>@_order.PlatformFeeAmount.ToString("C")</span>
+                    </div>
+                    <div class="d-flex justify-content-between border-top pt-2 fw-bold">
+                        <span>Total paid</span>
+                        <span>@_order.TotalAmount.ToString("C")</span>
+                    </div>
+
+                    <a class="btn btn-outline-primary w-100 mt-3" href="@($"/api/orders/{_order.Id}/invoice")" target="_blank">
+                        Download invoice (PDF)
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div class="d-flex gap-2 flex-wrap mb-4">
         @if (_isSeller && _order.Status == OrderStatus.Paid)
         {
-            <button class="btn btn-success" @onclick="Fulfill">Mark fulfilled</button>
+            <button class="btn btn-success" disabled="@_busy" @onclick="Fulfill">Mark fulfilled</button>
         }
 
         @if (_order.Status is OrderStatus.Paid or OrderStatus.Fulfilled)
@@ -64,35 +130,57 @@ else
 
     @if (_showDisputeForm)
     {
-        <div class="card mb-4"><div class="card-body">
-            <label class="form-label">Dispute reason</label>
-            <textarea class="form-control mb-2" @bind="_disputeReason"></textarea>
-            <button class="btn btn-danger" @onclick="RaiseDispute">Submit dispute</button>
-        </div></div>
+        <div class="ml-panel card mb-4">
+            <div class="card-header">Raise a dispute</div>
+            <div class="card-body">
+                <label class="form-label">What went wrong?</label>
+                <textarea class="form-control mb-3" rows="3" @bind="_disputeReason"
+                          placeholder="Describe the issue — wrong items, damaged stock, never arrived…"></textarea>
+                <button class="btn btn-danger" disabled="@_busy" @onclick="RaiseDispute">Submit dispute</button>
+            </div>
+        </div>
     }
 
     @if (_showFeedbackForm)
     {
-        <div class="card mb-4"><div class="card-body">
-            <label class="form-label">Rating (1-5)</label>
-            <input type="number" min="1" max="5" class="form-control mb-2" @bind="_feedbackRating" />
-            <label class="form-label">Comment (optional)</label>
-            <textarea class="form-control mb-2" @bind="_feedbackComment"></textarea>
-            <button class="btn btn-primary" @onclick="SubmitFeedback">Submit feedback</button>
-        </div></div>
+        <div class="ml-panel card mb-4">
+            <div class="card-header">Leave feedback</div>
+            <div class="card-body">
+                <label class="form-label">Rating</label>
+                <select class="form-select mb-3" style="max-width: 220px;" @bind="_feedbackRating">
+                    <option value="5">★★★★★ — Excellent</option>
+                    <option value="4">★★★★ — Good</option>
+                    <option value="3">★★★ — Okay</option>
+                    <option value="2">★★ — Poor</option>
+                    <option value="1">★ — Bad</option>
+                </select>
+                <label class="form-label">Comment <span class="text-muted fw-normal">(optional)</span></label>
+                <textarea class="form-control mb-3" rows="2" @bind="_feedbackComment"></textarea>
+                <button class="btn btn-primary" disabled="@_busy" @onclick="SubmitFeedback">Submit feedback</button>
+            </div>
+        </div>
     }
 
     @if (_feedback.Count > 0)
     {
-        <h5>Feedback</h5>
-        <ul class="list-group">
-            @foreach (var f in _feedback)
-            {
-                <li class="list-group-item">
-                    <strong>@f.SubmittedBy</strong>: @f.Rating/5 — @f.Comment
-                </li>
-            }
-        </ul>
+        <div class="ml-panel card">
+            <div class="card-header">Feedback</div>
+            <ul class="list-group list-group-flush">
+                @foreach (var f in _feedback)
+                {
+                    <li class="list-group-item">
+                        <div class="d-flex justify-content-between">
+                            <strong>@f.SubmittedBy</strong>
+                            <span class="text-warning" aria-label="@f.Rating out of 5">@(new string('★', f.Rating))<span class="text-muted">@(new string('★', 5 - f.Rating))</span></span>
+                        </div>
+                        @if (!string.IsNullOrEmpty(f.Comment))
+                        {
+                            <div class="text-muted">@f.Comment</div>
+                        }
+                    </li>
+                }
+            </ul>
+        </div>
     }
 }
 
@@ -105,6 +193,7 @@ else
 
     private Order? _order;
     private bool _loading = true;
+    private bool _busy;
     private bool _isParty;
     private bool _isBuyer;
     private bool _isSeller;
@@ -151,76 +240,111 @@ else
 
     private async Task Fulfill()
     {
-        var fresh = await Db.Orders.FirstAsync(o => o.Id == OrderId);
-        fresh.Status = OrderStatus.Fulfilled;
-        fresh.FulfilledAt = DateTime.UtcNow;
-        await Db.SaveChangesAsync();
+        if (_busy) return;
+        _busy = true;
+        try
+        {
+            var fresh = await Db.Orders.FirstAsync(o => o.Id == OrderId);
+            if (fresh.Status != OrderStatus.Paid)
+            {
+                _message = "This order is no longer in a fulfillable state.";
+                return;
+            }
 
-        await Notifications.NotifyPharmacyAsync(fresh.BuyerPharmacyId, "Order fulfilled", "Your order has been marked as shipped/fulfilled by the seller.");
+            fresh.Status = OrderStatus.Fulfilled;
+            fresh.FulfilledAt = DateTime.UtcNow;
+            await Db.SaveChangesAsync();
 
-        _message = "Order marked as fulfilled.";
-        await Reload();
+            await Notifications.NotifyPharmacyAsync(fresh.BuyerPharmacyId, "Order fulfilled", "Your order has been marked as shipped/fulfilled by the seller.");
+
+            _message = "Order marked as fulfilled.";
+            await Reload();
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private async Task RaiseDispute()
     {
+        if (_busy) return;
+
         if (string.IsNullOrWhiteSpace(_disputeReason))
         {
             _message = "A reason is required.";
             return;
         }
 
-        var fresh = await Db.Orders.FirstAsync(o => o.Id == OrderId);
-        var party = _isBuyer ? OrderParty.Buyer : OrderParty.Seller;
+        _busy = true;
+        try
+        {
+            var fresh = await Db.Orders.FirstAsync(o => o.Id == OrderId);
+            var party = _isBuyer ? OrderParty.Buyer : OrderParty.Seller;
 
-        fresh.Status = OrderStatus.Disputed;
-        fresh.DisputeRaisedBy = party;
-        fresh.DisputeReason = _disputeReason;
-        fresh.DisputeRaisedAt = DateTime.UtcNow;
-        await Db.SaveChangesAsync();
+            fresh.Status = OrderStatus.Disputed;
+            fresh.DisputeRaisedBy = party;
+            fresh.DisputeReason = _disputeReason;
+            fresh.DisputeRaisedAt = DateTime.UtcNow;
+            await Db.SaveChangesAsync();
 
-        var notifyPharmacyId = party == OrderParty.Buyer ? fresh.SellerPharmacyId : fresh.BuyerPharmacyId;
-        await Notifications.NotifyPharmacyAsync(notifyPharmacyId, "Order disputed", $"A dispute was raised on your order: {_disputeReason}");
+            var notifyPharmacyId = party == OrderParty.Buyer ? fresh.SellerPharmacyId : fresh.BuyerPharmacyId;
+            await Notifications.NotifyPharmacyAsync(notifyPharmacyId, "Order disputed", $"A dispute was raised on your order: {_disputeReason}");
 
-        _showDisputeForm = false;
-        _message = "Dispute submitted. An admin will review it.";
-        await Reload();
+            _showDisputeForm = false;
+            _message = "Dispute submitted. An admin will review it.";
+            await Reload();
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private async Task SubmitFeedback()
     {
+        if (_busy) return;
+
         if (_feedbackRating is < 1 or > 5)
         {
             _message = "Rating must be between 1 and 5.";
             return;
         }
 
-        var party = _isBuyer ? OrderParty.Buyer : OrderParty.Seller;
-
-        if (await Db.OrderFeedbacks.AnyAsync(f => f.OrderId == OrderId && f.SubmittedBy == party))
+        _busy = true;
+        try
         {
-            _message = "You've already submitted feedback for this order.";
-            return;
+            var party = _isBuyer ? OrderParty.Buyer : OrderParty.Seller;
+
+            if (await Db.OrderFeedbacks.AnyAsync(f => f.OrderId == OrderId && f.SubmittedBy == party))
+            {
+                _message = "You've already submitted feedback for this order.";
+                return;
+            }
+
+            var feedback = new OrderFeedback
+            {
+                OrderId = OrderId,
+                SubmittedBy = party,
+                SubmittedByPharmacyId = _user!.PharmacyId!,
+                Rating = _feedbackRating,
+                Comment = _feedbackComment
+            };
+
+            Db.OrderFeedbacks.Add(feedback);
+            await Db.SaveChangesAsync();
+
+            var order = await Db.Orders.FirstAsync(o => o.Id == OrderId);
+            var notifyPharmacyId = party == OrderParty.Buyer ? order.SellerPharmacyId : order.BuyerPharmacyId;
+            await Notifications.NotifyPharmacyAsync(notifyPharmacyId, "New feedback received", $"You received {_feedbackRating}/5 feedback on an order.");
+
+            _showFeedbackForm = false;
+            _message = "Feedback submitted.";
+            await Reload();
         }
-
-        var feedback = new OrderFeedback
+        finally
         {
-            OrderId = OrderId,
-            SubmittedBy = party,
-            SubmittedByPharmacyId = _user!.PharmacyId!,
-            Rating = _feedbackRating,
-            Comment = _feedbackComment
-        };
-
-        Db.OrderFeedbacks.Add(feedback);
-        await Db.SaveChangesAsync();
-
-        var order = await Db.Orders.FirstAsync(o => o.Id == OrderId);
-        var notifyPharmacyId = party == OrderParty.Buyer ? order.SellerPharmacyId : order.BuyerPharmacyId;
-        await Notifications.NotifyPharmacyAsync(notifyPharmacyId, "New feedback received", $"You received {_feedbackRating}/5 feedback on an order.");
-
-        _showFeedbackForm = false;
-        _message = "Feedback submitted.";
-        await Reload();
+            _busy = false;
+        }
     }
 }

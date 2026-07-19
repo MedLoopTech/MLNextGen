@@ -1,0 +1,26 @@
+<div class="empty-state">
+    <div class="empty-icon mb-2" aria-hidden="true">@Icon</div>
+    <p class="mb-1 fw-semibold">@Title</p>
+    @if (!string.IsNullOrEmpty(Subtitle))
+    {
+        <p class="mb-3 small">@Subtitle</p>
+    }
+    @if (ChildContent is not null)
+    {
+        @ChildContent
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string Icon { get; set; } = "🗂";
+
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? Subtitle { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

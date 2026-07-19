@@ -1,0 +1,14 @@
+@* Used by Routes.razor: an unauthenticated hit on a protected page goes
+   straight to the login form with a returnUrl, instead of showing a dead-end
+   "you need to log in" paragraph the user has to click through. *@
+@inject NavigationManager Nav
+
+@code {
+    protected override void OnInitialized()
+    {
+        var returnUrl = Nav.ToBaseRelativePath(Nav.Uri);
+        Nav.NavigateTo(string.IsNullOrEmpty(returnUrl)
+            ? "/account/login"
+            : $"/account/login?returnUrl=/{Uri.EscapeDataString(returnUrl)}", forceLoad: true);
+    }
+}

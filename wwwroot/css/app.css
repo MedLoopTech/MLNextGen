@@ -1,0 +1,210 @@
+/* MedLoop NextGen portal styles — layered on top of Bootstrap 5.3.
+   Bootstrap 5.3 CSS variables are overridden here rather than forking the
+   framework itself, so a Bootstrap upgrade stays a one-line CDN bump. */
+
+:root {
+    --ml-brand: #0e7c6b;          /* deep teal — primary brand */
+    --ml-brand-dark: #0a5f52;
+    --ml-brand-light: #e6f4f1;
+    --ml-accent: #f0a202;         /* amber accent, used sparingly */
+    --ml-ink: #1e2a32;
+    --ml-surface: #f6f8f9;
+
+    --bs-primary: var(--ml-brand);
+    --bs-primary-rgb: 14, 124, 107;
+    --bs-link-color: var(--ml-brand);
+    --bs-link-color-rgb: 14, 124, 107;
+    --bs-link-hover-color: var(--ml-brand-dark);
+    --bs-link-hover-color-rgb: 10, 95, 82;
+    --bs-body-color: var(--ml-ink);
+    --bs-body-bg: var(--ml-surface);
+}
+
+/* Bootstrap component variable overrides (5.3 exposes these per-component) */
+.btn-primary {
+    --bs-btn-bg: var(--ml-brand);
+    --bs-btn-border-color: var(--ml-brand);
+    --bs-btn-hover-bg: var(--ml-brand-dark);
+    --bs-btn-hover-border-color: var(--ml-brand-dark);
+    --bs-btn-active-bg: var(--ml-brand-dark);
+    --bs-btn-active-border-color: var(--ml-brand-dark);
+    --bs-btn-disabled-bg: var(--ml-brand);
+    --bs-btn-disabled-border-color: var(--ml-brand);
+}
+
+.btn-outline-primary {
+    --bs-btn-color: var(--ml-brand);
+    --bs-btn-border-color: var(--ml-brand);
+    --bs-btn-hover-bg: var(--ml-brand);
+    --bs-btn-hover-border-color: var(--ml-brand);
+    --bs-btn-active-bg: var(--ml-brand-dark);
+    --bs-btn-active-border-color: var(--ml-brand-dark);
+    --bs-btn-disabled-color: var(--ml-brand);
+    --bs-btn-disabled-border-color: var(--ml-brand);
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--ml-brand);
+    box-shadow: 0 0 0 0.25rem rgba(14, 124, 107, 0.15);
+}
+
+.nav-link:focus-visible,
+.btn:focus-visible {
+    box-shadow: 0 0 0 0.25rem rgba(14, 124, 107, 0.35);
+}
+
+/* ---- App shell ---- */
+
+.ml-navbar {
+    background: linear-gradient(135deg, #0b3d4c 0%, var(--ml-brand-dark) 100%);
+}
+
+.ml-navbar .navbar-brand {
+    font-weight: 650;
+    letter-spacing: 0.2px;
+}
+
+.ml-navbar .brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    margin-right: 0.45rem;
+    border-radius: 0.4rem;
+    background: var(--ml-accent);
+    color: #14323c;
+    font-size: 0.95rem;
+    font-weight: 800;
+}
+
+.ml-navbar .nav-link {
+    border-radius: 0.4rem;
+    padding-inline: 0.75rem;
+}
+
+.ml-navbar .nav-link.active {
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+}
+
+.ml-footer {
+    background: #fff;
+    border-top: 1px solid var(--bs-border-color);
+}
+
+/* ---- Cards / panels ---- */
+
+.ml-panel {
+    background: #fff;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 2px rgba(30, 42, 50, 0.05);
+}
+
+.ml-panel .card-header,
+.ml-panel > .panel-header {
+    background: transparent;
+    border-bottom: 1px solid var(--bs-border-color);
+    font-weight: 600;
+}
+
+.page-header h1,
+.page-header h2,
+.page-header h3 {
+    font-weight: 650;
+}
+
+/* ---- Tables ---- */
+
+.ml-panel .table {
+    margin-bottom: 0;
+}
+
+.ml-panel .table thead th {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: #5b6b74;
+    border-bottom-width: 1px;
+    white-space: nowrap;
+}
+
+.ml-panel .table > :not(caption) > * > * {
+    padding-top: 0.7rem;
+    padding-bottom: 0.7rem;
+}
+
+/* ---- Status badges ---- */
+
+.status-badge {
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    padding: 0.36em 0.7em;
+    border-radius: 2rem;
+}
+
+/* ---- Auth pages ---- */
+
+.auth-card {
+    max-width: 430px;
+    margin-inline: auto;
+}
+
+.auth-card .auth-brand {
+    color: var(--ml-brand-dark);
+    font-weight: 700;
+}
+
+/* ---- Hero (home page) ---- */
+
+.ml-hero {
+    background:
+        radial-gradient(1100px 380px at 85% -10%, rgba(240, 162, 2, 0.16), transparent 60%),
+        linear-gradient(135deg, #0b3d4c 0%, var(--ml-brand-dark) 55%, var(--ml-brand) 100%);
+    color: #fff;
+    border-radius: 1rem;
+}
+
+.ml-hero .lead {
+    color: rgba(255, 255, 255, 0.85);
+    max-width: 42rem;
+}
+
+.feature-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 0.6rem;
+    background: var(--ml-brand-light);
+    color: var(--ml-brand-dark);
+    font-size: 1.2rem;
+}
+
+/* ---- Empty states ---- */
+
+.empty-state {
+    padding: 3rem 1rem;
+    text-align: center;
+    color: #5b6b74;
+}
+
+.empty-state .empty-icon {
+    font-size: 2rem;
+    opacity: 0.5;
+}
+
+/* ---- Expiry urgency ---- */
+
+.expiry-soon {
+    color: #b02a37;
+    font-weight: 600;
+}
+
+.expiry-near {
+    color: #997404;
+    font-weight: 600;
+}

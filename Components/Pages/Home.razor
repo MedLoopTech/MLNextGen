@@ -1,19 +1,64 @@
 @page "/"
 
-<PageTitle>MedLoop NextGen</PageTitle>
+<PageTitle>MedLoop NextGen — B2B pharmacy marketplace</PageTitle>
 
-<div class="text-center py-5">
-    <h1>MedLoop NextGen</h1>
-    <p class="lead">B2B redistribution marketplace portal.</p>
+<div class="ml-hero p-4 p-md-5 mb-4">
+    <h1 class="display-6 fw-bold mb-2">Redistribute surplus stock.<br />Recover its value.</h1>
+    <p class="lead mb-4">
+        MedLoop NextGen is the B2B marketplace where pharmacies list near-dated and surplus
+        medicine, negotiate directly with each other, and turn write-offs into revenue.
+    </p>
 
     <AuthorizeView>
         <Authorized>
-            <a class="btn btn-primary me-2" href="/marketplace">Browse the marketplace</a>
-            <a class="btn btn-outline-secondary" href="/orders/mine">My orders</a>
+            <a class="btn btn-light fw-semibold me-2" href="/marketplace">Browse the marketplace</a>
+            <a class="btn btn-outline-light" href="/orders/mine">My orders</a>
         </Authorized>
         <NotAuthorized>
-            <a class="btn btn-primary me-2" href="/account/login">Log in</a>
-            <a class="btn btn-outline-secondary" href="/account/register">Register</a>
+            <a class="btn btn-light fw-semibold me-2" href="/account/register">Create an account</a>
+            <a class="btn btn-outline-light" href="/account/login">Log in</a>
         </NotAuthorized>
     </AuthorizeView>
+</div>
+
+<div class="row g-3">
+    <div class="col-md-4">
+        <div class="ml-panel card h-100">
+            <div class="card-body">
+                <div class="feature-icon mb-3" aria-hidden="true">📦</div>
+                <h5>List surplus stock</h5>
+                <p class="text-muted mb-0">
+                    Mark approved inventory for redistribution and it's instantly visible
+                    to every other pharmacy on the network — with live availability that
+                    accounts for stock already locked by open deals.
+                </p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="ml-panel card h-100">
+            <div class="card-body">
+                <div class="feature-icon mb-3" aria-hidden="true">🤝</div>
+                <h5>Negotiate openly</h5>
+                <p class="text-muted mb-0">
+                    Bid on listings, counter-offer in either direction, and accept when the
+                    terms work. Every round is recorded, so both sides always see exactly
+                    what was agreed.
+                </p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="ml-panel card h-100">
+            <div class="card-body">
+                <div class="feature-icon mb-3" aria-hidden="true">🧾</div>
+                <h5>Settle with confidence</h5>
+                <p class="text-muted mb-0">
+                    Checkout computes the total server-side from the accepted terms, stock is
+                    reserved atomically, and a PDF invoice is generated for every completed
+                    order.
+                </p>
+            </div>
+        </div>
+    </div>
 </div>

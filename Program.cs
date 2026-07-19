@@ -16,6 +16,15 @@ QuestPDF.Settings.License = LicenseType.Community;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// The container's default is the invariant culture, under which every
+// ToString("C") in the portal renders the generic "¤" currency sign.
+// Pin an explicit culture (configurable) so money formats consistently
+// everywhere — portal pages and PDF invoices alike.
+var appCulture = new System.Globalization.CultureInfo(
+    builder.Configuration["App:Culture"] ?? "en-US");
+System.Globalization.CultureInfo.DefaultThreadCurrentCulture = appCulture;
+System.Globalization.CultureInfo.DefaultThreadCurrentUICulture = appCulture;
+
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 
@@ -51,6 +60,43 @@ builder.Services
 // instead of silently going nowhere. Singleton for the same root-provider
 // resolution reason as IEmailSender above.
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityEmailSenderAdapter>();
+
+// AddIdentityApiEndpoints configures auth API-style: its composite scheme
+// sends every challenge to the Bearer handler, so an unauthenticated
+// request gets a bare 401 (WWW-Authenticate: Bearer) — never a redirect.
+// Right for REST clients, wrong for a person clicking a deep link into the
+// portal — they'd land on a blank 401 page (verified by hitting /bids/mine
+// anonymously). Challenges are routed to the cookie handler instead, whose
+// OnRedirectToLogin below splits by client type: browser navigations
+// (Accept: text/html) get the login page with a returnUrl; everything else
+// keeps its 401/403.
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultChallengeScheme = IdentityConstants.ApplicationScheme;
+});
+
+builder.Services.ConfigureApplicationCookie(options =>
+{
+    options.LoginPath = "/account/login";
+    options.ReturnUrlParameter = "returnUrl";
+    options.Events.OnRedirectToLogin = context =>
+    {
+        if (context.Request.Headers.Accept.ToString().Contains("text/html"))
+        {
+            context.Response.Redirect(context.RedirectUri);
+        }
+        else
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        }
+        return Task.CompletedTask;
+    };
+    options.Events.OnRedirectToAccessDenied = context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return Task.CompletedTask;
+    };
+});
 
 var nearExpiryJobKey = new JobKey("NearExpiryNotificationJob");
 var markExpiredJobKey = new JobKey("MarkExpiredListingsJob");
@@ -173,7 +219,34 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Browser navigations that end in an empty-bodied 404 (a URL matching no
+// @page route 404s at endpoint routing without ever reaching the Blazor
+// router, so the Router's NotFound fragment can't help) get re-executed to
+// the styled /not-found page, keeping the 404 status. Scoped to text/html
+// requests outside /api so API clients keep their plain status codes.
+// Hand-rolled rather than UseStatusCodePagesWithReExecute, and paired with
+// the explicit UseRouting() call below — WebApplication otherwise inserts
+// route matching at the very front of the pipeline, before this middleware,
+// so a re-executed request would never be re-matched against the new path
+// and the second pass would dead-end in the same empty 404 (this is also
+// why the stock re-execute middleware silently did nothing here).
+app.Use(async (ctx, next) =>
+{
+    await next();
+
+    if (ctx.Response.StatusCode == StatusCodes.Status404NotFound
+        && !ctx.Response.HasStarted
+        && !ctx.Request.Path.StartsWithSegments("/api")
+        && ctx.Request.Headers.Accept.ToString().Contains("text/html"))
+    {
+        ctx.Request.Path = "/not-found";
+        await next();
+    }
+});
+
 app.UseStaticFiles();
+app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
@@ -188,15 +261,24 @@ app.MapControllers();
 // interactive SignalR circuit has already been established) — these pages
 // render as plain static HTML forms instead.
 //
-// KNOWN GAP, called out rather than silently skipped: .DisableAntiforgery()
-// is used here because the plain forms don't currently include an
-// antiforgery token. This should be fixed (via Blazor's <AntiforgeryToken />
-// component plus validating it here) before this goes to production — the
-// legacy app's audit flagged missing CSRF protection as a real, exploited
-// pattern, and this is the same class of gap, just in new code.
-app.MapPost("/account/login-form", async (HttpContext httpContext, SignInManager<ApplicationUser> signInManager) =>
+// CSRF: binding IFormCollection as a handler parameter (rather than
+// calling Request.ReadFormAsync() inside the handler) is what opts these
+// endpoints into .NET 8's automatic antiforgery validation — the
+// UseAntiforgery() middleware only validates endpoints with form-binding
+// metadata. Each form includes Blazor's <AntiforgeryToken /> component.
+// This closes the gap the earlier .DisableAntiforgery() version of these
+// endpoints documented as a known pre-production TODO.
+//
+// returnUrl comes from a query string an attacker can mint links with, so
+// only same-site paths are honored — anything else falls back to "/"
+// rather than becoming an open redirect off a trusted login page.
+static string SafeReturnUrl(string returnUrl) =>
+    !string.IsNullOrWhiteSpace(returnUrl) && returnUrl.StartsWith('/') && !returnUrl.StartsWith("//")
+        ? returnUrl
+        : "/";
+
+app.MapPost("/account/login-form", async (IFormCollection form, SignInManager<ApplicationUser> signInManager) =>
 {
-    var form = await httpContext.Request.ReadFormAsync();
     var email = form["email"].ToString();
     var password = form["password"].ToString();
     var returnUrl = form["returnUrl"].ToString();
@@ -207,16 +289,15 @@ app.MapPost("/account/login-form", async (HttpContext httpContext, SignInManager
         return Results.Redirect($"/account/login?error=1&returnUrl={Uri.EscapeDataString(returnUrl)}");
     }
 
-    return Results.Redirect(string.IsNullOrWhiteSpace(returnUrl) ? "/" : returnUrl);
-}).DisableAntiforgery();
+    return Results.Redirect(SafeReturnUrl(returnUrl));
+});
 
 app.MapPost("/account/register-form", async (
-    HttpContext httpContext,
+    IFormCollection form,
     UserManager<ApplicationUser> userManager,
     SignInManager<ApplicationUser> signInManager,
     AppDbContext db) =>
 {
-    var form = await httpContext.Request.ReadFormAsync();
     var email = form["email"].ToString();
     var password = form["password"].ToString();
     var displayName = form["displayName"].ToString();
@@ -253,14 +334,18 @@ app.MapPost("/account/register-form", async (
     }
 
     await signInManager.SignInAsync(user, isPersistent: true);
-    return Results.Redirect(string.IsNullOrWhiteSpace(returnUrl) ? "/" : returnUrl);
-}).DisableAntiforgery();
+    return Results.Redirect(SafeReturnUrl(returnUrl));
+});
 
-app.MapPost("/account/logout", async (SignInManager<ApplicationUser> signInManager) =>
+// The unused IFormCollection parameter is deliberate: it's what attaches
+// the form-binding metadata that makes UseAntiforgery() validate this
+// endpoint. Without it, a logout CSRF (forced logout from any page on the
+// internet) would still be possible.
+app.MapPost("/account/logout", async (IFormCollection form, SignInManager<ApplicationUser> signInManager) =>
 {
     await signInManager.SignOutAsync();
     return Results.Redirect("/");
-}).DisableAntiforgery();
+});
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

@@ -3,9 +3,27 @@
 <div class="d-flex flex-column min-vh-100">
     <NavMenu />
     <main class="container py-4 flex-grow-1">
-        @Body
+        @* Without this boundary, an unhandled exception in any page takes
+           down the whole circuit with Blazor's raw yellow error bar. A
+           production user gets a recoverable message instead; the full
+           exception still goes to the server logs. *@
+        <ErrorBoundary>
+            <ChildContent>
+                @Body
+            </ChildContent>
+            <ErrorContent>
+                <div class="ml-panel card border-danger-subtle mx-auto my-5" style="max-width: 480px;">
+                    <div class="card-body text-center py-5">
+                        <div class="fs-1 mb-2" aria-hidden="true">⚠️</div>
+                        <h5 class="mb-2">Something went wrong</h5>
+                        <p class="text-muted mb-3">The error has been logged. Reload the page to continue — if it keeps happening, contact support.</p>
+                        <a class="btn btn-primary" href="" @onclick:preventDefault="false">Reload</a>
+                    </div>
+                </div>
+            </ErrorContent>
+        </ErrorBoundary>
     </main>
-    <footer class="text-center text-muted py-3 border-top">
-        <small>MedLoop NextGen — B2B portal</small>
+    <footer class="ml-footer text-center text-muted py-3 mt-auto">
+        <small>MedLoop NextGen — B2B redistribution marketplace</small>
     </footer>
 </div>

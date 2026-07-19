@@ -1,0 +1,18 @@
+@page "/not-found"
+
+@* Target of UseStatusCodePagesWithReExecute (Program.cs): in .NET 8, a URL
+   matching no @page route 404s at the endpoint-routing layer with an empty
+   body — the Router's own NotFound fragment never runs for a full-page
+   load. Browser requests get re-executed here; the original 404 status is
+   preserved by the middleware. *@
+
+<PageTitle>Page not found — MedLoop NextGen</PageTitle>
+
+<div class="ml-panel card mx-auto my-5" style="max-width: 480px;">
+    <div class="card-body text-center py-5">
+        <div class="fs-1 mb-2" aria-hidden="true">🔍</div>
+        <h5 class="mb-2">Page not found</h5>
+        <p class="text-muted mb-3">The page you're looking for doesn't exist or may have moved.</p>
+        <a class="btn btn-primary" href="/">Back to home</a>
+    </div>
+</div>
