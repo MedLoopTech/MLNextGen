@@ -64,8 +64,15 @@ A bid isn't just accept-or-reject — either side can propose new terms back, pi
 - The legacy app carried **five** PDF libraries (`iTextSharp`, `ABCpdf`, `Aspose.PDF`, `Ghostscript.NET`, `Rotativa`) — a repo-wide grep in the original audit found only `iTextSharp` was ever actually invoked; the other four were dead weight, two of them (`ABCpdf`, `Aspose.PDF`) carrying real commercial license fees for code that did nothing. QuestPDF is the only PDF dependency here.
 - **Licensing caveat, called out explicitly rather than assumed away** (see the comment on `QuestPdfInvoiceService`): QuestPDF's free "Community" license only covers organizations under $1M USD annual gross revenue (or non-profit/open source). Confirm MedLoop's eligibility before this ships to production — this is the same class of licensing question the legacy audit flagged for `iTextSharp` (AGPL) and never resolved. Don't repeat that here.
 
+### Scheduled jobs
+- Quartz.NET (same library the legacy app used), wired in `Program.cs` with two daily jobs:
+  - `NearExpiryNotificationJob` (08:00 UTC) — notifies a pharmacy when one of its own `ForRedistribution` listings is within 30 days of expiry.
+  - `MarkExpiredListingsJob` (00:30 UTC) — marks listings past their expiry date as `Disposed` and notifies the owning pharmacy.
+- Both jobs fix the exact scheduler bugs the legacy audit found in `EmaiService/SchedulerManager.cs`: every step is wrapped in try/catch and logged via `ILogger<T>` (not `Console.WriteLine`), and one bad row/notification failure logs and moves on instead of silently killing the entire run with nothing useful left in production logs to diagnose it.
+- Job classes are registered `Scoped` in DI (`builder.Services.AddScoped<TJob>()`) alongside `q.AddJob<TJob>()` — required because `UseMicrosoftDependencyInjectionJobFactory()` resolves job instances directly from the container, giving each run a fresh `AppDbContext` rather than a long-lived one across runs.
+
 ## What's deliberately NOT here yet
-Real-time push (these are polled/in-app notifications plus email, not sockets/webhooks), scheduled jobs, the POS module, and the long-tail collections (feedback, rewards, promo codes, appointments, disposer/technician/distributor workflows). Those get added incrementally per the phased migration plan. A **real** payment gateway integration (replacing `MockPaymentGateway`, and adding an actual refund path) is also still pending — see the gaps noted above before that swap happens.
+Real-time push (these are polled/in-app notifications plus email, not sockets/webhooks), the POS module, and the long-tail collections (feedback, rewards, promo codes, appointments, disposer/technician/distributor workflows). Those get added incrementally per the phased migration plan. A **real** payment gateway integration (replacing `MockPaymentGateway`, and adding an actual refund path) is also still pending — see the gaps noted above before that swap happens.
 
 ## Running locally
 ```bash

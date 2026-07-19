@@ -1,7 +1,9 @@
 using MedLoop.NextGen.Data;
+using MedLoop.NextGen.Jobs;
 using MedLoop.NextGen.Models;
 using MedLoop.NextGen.Services;
 using Microsoft.AspNetCore.Identity;
+using Quartz;
 using QuestPDF.Infrastructure;
 
 // See the licensing note on QuestPdfInvoiceService: Community is free only
@@ -37,6 +39,35 @@ builder.Services
 // confirmation / password reset emails actually get sent through Gmail
 // instead of silently going nowhere.
 builder.Services.AddScoped<IEmailSender<ApplicationUser>, IdentityEmailSenderAdapter>();
+
+var nearExpiryJobKey = new JobKey("NearExpiryNotificationJob");
+var markExpiredJobKey = new JobKey("MarkExpiredListingsJob");
+
+builder.Services.AddQuartz(q =>
+{
+    q.UseMicrosoftDependencyInjectionJobFactory();
+
+    q.AddJob<NearExpiryNotificationJob>(opts => opts.WithIdentity(nearExpiryJobKey).StoreDurably());
+    q.AddTrigger(opts => opts
+        .ForJob(nearExpiryJobKey)
+        .WithIdentity("NearExpiryNotificationTrigger")
+        .WithCronSchedule("0 0 8 * * ?")); // daily at 08:00 UTC
+
+    q.AddJob<MarkExpiredListingsJob>(opts => opts.WithIdentity(markExpiredJobKey).StoreDurably());
+    q.AddTrigger(opts => opts
+        .ForJob(markExpiredJobKey)
+        .WithIdentity("MarkExpiredListingsTrigger")
+        .WithCronSchedule("0 30 0 * * ?")); // daily at 00:30 UTC
+});
+
+builder.Services.AddQuartzHostedService(opts => opts.WaitForJobsToComplete = true);
+
+// Required alongside q.AddJob<T>() above: UseMicrosoftDependencyInjectionJobFactory
+// resolves job instances directly from the container, so each job type also
+// needs its own explicit DI registration (Scoped, so it gets a fresh
+// AppDbContext per run — same pattern the legacy app used for its Quartz jobs).
+builder.Services.AddScoped<NearExpiryNotificationJob>();
+builder.Services.AddScoped<MarkExpiredListingsJob>();
 
 builder.Services.AddAuthorization();
 builder.Services.AddControllers();
