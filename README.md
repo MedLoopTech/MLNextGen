@@ -8,13 +8,20 @@ This is **not** a fork of `PharmacyWebapp` and contains none of its code. It's a
 - ASP.NET Core 8 Web API project.
 - PostgreSQL via EF Core + Npgsql, with migrations applied automatically on startup in Development.
 - Real authentication via ASP.NET Core Identity (`AddIdentityApiEndpoints` — built-in `/register`, `/login`, `/refresh` endpoints), with role support wired up (`AddRoles<IdentityRole>()`).
-- Two entities as a proof of concept: `ApplicationUser` (extends `IdentityUser`) and `Pharmacy`, with a real foreign-key relationship and EF Core migrations — not a document store with string IDs standing in for relations.
-- `PharmaciesController` — a minimal CRUD example that's actually `[Authorize]`-protected and validates its input.
 - `Dockerfile` that runs as a non-root user out of the box.
 - `docker-compose.yml` for local development against a real Postgres instance — no cloud account needed to run this locally.
 
+### Entities/modules implemented so far
+- `Pharmacy`, `ApplicationUser` (FK'd to a pharmacy).
+- `Branch`, `Warehouse` — both scoped to a pharmacy with real foreign keys (no denormalized name copies the way the legacy Firestore schema had `pharmacyName`/`branchName` duplicated onto every child record).
+- `Category` — simple open-read marketplace taxonomy, admin-write.
+- `Product` — the core listing entity. Consolidates the legacy schema's four overlapping status fields (`status`, `productStatus`, `isApproved`, `isRejected`, `isDisposed`) into one `ProductListingStatus` enum, and replaces the legacy's string-typed `expiryDate` (parsed ad hoc with `DateTime.TryParse` at every call site) with a real `DateOnly` column. `AvailableQuantity` (`Quantity - LockQuantity`) is a computed property, not a value mutated independently from multiple call sites.
+- `GET /api/products/marketplace` — the MedLoop Connect-style browse endpoint, filtered and paged entirely at the database query level. The legacy equivalent (`MedLoopConnectController.getAllProducts`) fetched a page, then issued one extra Firestore read *per product on the page* just to compute locked quantity — that N+1 pattern doesn't exist here because `AvailableQuantity` needs no follow-up query.
+- Ownership checks on every write endpoint that touches tenant data (`BranchesController`, `WarehousesController`, `ProductsController`): a pharmacy/branch/warehouse ID is always derived from the authenticated caller's own account (via `UserManager<ApplicationUser>`), never taken from the request body, and cross-tenant writes return `403`. This directly closes the gap found in the legacy app's `BidApprovalController`/`OfferStatusController`, where approving or rejecting a bid, or finalizing payment, never checked that the caller actually owned the resource being acted on.
+- Deletes are soft (`IsActive = false` via `DELETE`, which really does an update) rather than hard deletes, and delete endpoints are real `[HttpDelete]` actions requiring auth — unlike the legacy app, where ~30 delete actions were exposed as unauthenticated `[HttpGet]` endpoints.
+
 ## What's deliberately NOT here yet
-Everything else — the ~45 other data collections/entities from the legacy app, the MedLoop Connect bidding flow, payments, PDF generation, email, scheduled jobs, the POS module, and so on. Per the phased migration plan, those get added incrementally, one module at a time, only once this foundation is confirmed solid.
+The B2B offer/bidding flow itself (`b2bOffers`/negotiation), orders, payments, PDF generation, email, scheduled jobs, the POS module, and the long-tail collections (notifications, feedback, rewards, promo codes, appointments, disposer/technician/distributor workflows). Per the phased migration plan, those get added incrementally, with the transactional core (orders/bids/payments) getting the most scrutiny since that's where the legacy app's worst bugs live (see the audit: buyer identity never recorded on bid creation, no ownership checks on approve/reject, the payment finalize step being a hardcoded stub that also crashes on a `dynamic` property access bug).
 
 ## Running locally
 ```bash
