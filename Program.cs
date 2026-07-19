@@ -2,6 +2,12 @@ using MedLoop.NextGen.Data;
 using MedLoop.NextGen.Models;
 using MedLoop.NextGen.Services;
 using Microsoft.AspNetCore.Identity;
+using QuestPDF.Infrastructure;
+
+// See the licensing note on QuestPdfInvoiceService: Community is free only
+// under QuestPDF's revenue/org-type conditions — confirm eligibility before
+// this ships to production.
+QuestPDF.Settings.License = LicenseType.Community;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,6 +19,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // change, since OrdersController depends only on IPaymentGateway.
 builder.Services.AddScoped<IPaymentGateway, MockPaymentGateway>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<IInvoiceService, QuestPdfInvoiceService>();
 
 builder.Services
     .AddIdentityApiEndpoints<ApplicationUser>(options =>

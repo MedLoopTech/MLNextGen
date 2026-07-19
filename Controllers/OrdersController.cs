@@ -18,19 +18,22 @@ public class OrdersController : ControllerBase
     private readonly IPaymentGateway _paymentGateway;
     private readonly IConfiguration _configuration;
     private readonly INotificationService _notifications;
+    private readonly IInvoiceService _invoiceService;
 
     public OrdersController(
         AppDbContext db,
         UserManager<ApplicationUser> userManager,
         IPaymentGateway paymentGateway,
         IConfiguration configuration,
-        INotificationService notifications)
+        INotificationService notifications,
+        IInvoiceService invoiceService)
     {
         _db = db;
         _userManager = userManager;
         _paymentGateway = paymentGateway;
         _configuration = configuration;
         _notifications = notifications;
+        _invoiceService = invoiceService;
     }
 
     [HttpGet("mine")]
@@ -86,6 +89,32 @@ public class OrdersController : ControllerBase
         }
 
         return Ok(order);
+    }
+
+    [HttpGet("{id}/invoice")]
+    public async Task<IActionResult> GetInvoice(string id)
+    {
+        var user = await _userManager.GetUserAsync(User);
+        var order = await _db.Orders
+            .Include(o => o.Product)
+            .Include(o => o.SellerPharmacy)
+            .Include(o => o.BuyerPharmacy)
+            .FirstOrDefaultAsync(o => o.Id == id);
+
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        var isAdmin = User.IsInRole("Admin");
+        var isParty = user?.PharmacyId == order.BuyerPharmacyId || user?.PharmacyId == order.SellerPharmacyId;
+        if (!isAdmin && !isParty)
+        {
+            return Forbid();
+        }
+
+        var pdfBytes = _invoiceService.GenerateOrderInvoice(order);
+        return File(pdfBytes, "application/pdf", $"invoice-{order.Id}.pdf");
     }
 
     public record CheckoutRequest(string BidId);

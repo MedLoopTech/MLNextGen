@@ -53,8 +53,13 @@ A bid isn't just accept-or-reject — either side can propose new terms back, pi
 - `NotifyPharmacyAsync` fans a notification out to every user belonging to a pharmacy (mirroring the legacy behavior of notifying all of a pharmacy's portal users), by looking up `ApplicationUser`s via the shared `AppDbContext.Users` (inherited from `IdentityDbContext`) — no separate user-lookup table needed.
 - `NotificationsController`: `GET /api/notifications/mine` (optionally `?unreadOnly=true`), `PUT /api/notifications/{id}/read`, `PUT /api/notifications/read-all` — all scoped to the calling user's own notifications only.
 
+### PDF invoices
+- `IInvoiceService`/`QuestPdfInvoiceService`, `GET /api/orders/{id}/invoice` — generates and streams back a one-page PDF invoice for a paid order (seller/buyer/product details, line item, platform fee, total, payment reference), ownership-checked the same way as the other order endpoints.
+- The legacy app carried **five** PDF libraries (`iTextSharp`, `ABCpdf`, `Aspose.PDF`, `Ghostscript.NET`, `Rotativa`) — a repo-wide grep in the original audit found only `iTextSharp` was ever actually invoked; the other four were dead weight, two of them (`ABCpdf`, `Aspose.PDF`) carrying real commercial license fees for code that did nothing. QuestPDF is the only PDF dependency here.
+- **Licensing caveat, called out explicitly rather than assumed away** (see the comment on `QuestPdfInvoiceService`): QuestPDF's free "Community" license only covers organizations under $1M USD annual gross revenue (or non-profit/open source). Confirm MedLoop's eligibility before this ships to production — this is the same class of licensing question the legacy audit flagged for `iTextSharp` (AGPL) and never resolved. Don't repeat that here.
+
 ## What's deliberately NOT here yet
-PDF/invoice generation, real-time push (these are polled/in-app notifications, not sockets/webhooks), email delivery of notifications, scheduled jobs, the POS module, and the long-tail collections (feedback, rewards, promo codes, appointments, disposer/technician/distributor workflows). Those get added incrementally per the phased migration plan. A **real** payment gateway integration (replacing `MockPaymentGateway`, and adding an actual refund path) is also still pending — see the gaps noted above before that swap happens.
+Real-time push (these are polled/in-app notifications, not sockets/webhooks), email delivery of notifications, scheduled jobs, the POS module, and the long-tail collections (feedback, rewards, promo codes, appointments, disposer/technician/distributor workflows). Those get added incrementally per the phased migration plan. A **real** payment gateway integration (replacing `MockPaymentGateway`, and adding an actual refund path) is also still pending — see the gaps noted above before that swap happens.
 
 ## Running locally
 ```bash
