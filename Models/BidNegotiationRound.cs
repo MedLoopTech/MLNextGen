@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace MedLoop.NextGen.Models;
 
 // Append-only audit trail of every offer/counter-offer on a Bid. The Bid
@@ -11,6 +13,14 @@ public class BidNegotiationRound
     public string Id { get; set; } = Guid.NewGuid().ToString();
 
     public string BidId { get; set; } = string.Empty;
+
+    // EF Core's navigation fixup populates this back-reference to the exact
+    // same Bid instance being serialized (Bid.NegotiationRounds -> this ->
+    // Bid), which drives System.Text.Json past its 32-level MaxDepth even
+    // with ReferenceHandler.IgnoreCycles set globally (confirmed: POST
+    // /api/bids hung until this was added). JsonIgnore breaks the cycle at
+    // the source instead of relying on depth/reference tracking to catch it.
+    [JsonIgnore]
     public Bid? Bid { get; set; }
 
     public NegotiationParty ProposedBy { get; set; }

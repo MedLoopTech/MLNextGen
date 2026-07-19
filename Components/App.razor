@@ -10,11 +10,11 @@
     <HeadOutlet />
 </head>
 <body>
-    <!-- Deliberately no @rendermode here: pages render as static server-side
-         HTML by default and opt into @rendermode="InteractiveServer"
-         individually. Login/Register/logout rely on staying static (see
-         Program.cs's form-post endpoints); the marketplace/bid/order pages
-         opt into interactivity themselves. -->
+    @* Deliberately no rendermode attribute here: pages render as static
+       server-side HTML by default and opt into InteractiveServer
+       individually. Login/Register/logout rely on staying static (see
+       Program.cs's form-post endpoints); the marketplace/bid/order pages
+       opt into interactivity themselves. *@
     <Routes />
     <script src="_framework/blazor.web.js"></script>
 </body>

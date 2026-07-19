@@ -26,27 +26,35 @@ public class GmailEmailSender : IEmailSender
 {
     private static readonly string[] Scopes = { GmailService.Scope.GmailSend };
 
-    private readonly string _senderAddress;
+    private readonly IConfiguration _configuration;
 
     public GmailEmailSender(IConfiguration configuration)
     {
-        var senderAddress = configuration["Email:SenderAddress"];
-        if (string.IsNullOrWhiteSpace(senderAddress))
-        {
-            // Fails loudly at startup (first resolution of this service)
-            // rather than surfacing as a confusing Gmail API error the
-            // first time someone tries to send an email.
-            throw new InvalidOperationException("Email:SenderAddress is not configured.");
-        }
-
-        _senderAddress = senderAddress;
+        _configuration = configuration;
     }
 
     public async Task SendAsync(string toEmail, string subject, string htmlBody, CancellationToken cancellationToken = default)
     {
+        // Validated here, not in the constructor: this service is
+        // Singleton (required so ASP.NET Core Identity's MapIdentityApi can
+        // resolve IEmailSender<TUser> from the root container at startup —
+        // see Program.cs), which means the constructor runs once, eagerly,
+        // during app startup regardless of whether anyone ever sends an
+        // email. A constructor that throws on missing config was found (by
+        // actually running the app) to take down the entire application at
+        // boot instead of just failing the first real send — moving the
+        // check here means a misconfigured environment can still start and
+        // serve every request that doesn't need email, and fails clearly
+        // only when a send is actually attempted.
+        var senderAddress = _configuration["Email:SenderAddress"];
+        if (string.IsNullOrWhiteSpace(senderAddress))
+        {
+            throw new InvalidOperationException("Email:SenderAddress is not configured.");
+        }
+
         var credential = (await GoogleCredential.GetApplicationDefaultAsync(cancellationToken))
             .CreateScoped(Scopes)
-            .CreateWithUser(_senderAddress);
+            .CreateWithUser(senderAddress);
 
         using var gmailService = new GmailService(new BaseClientService.Initializer
         {
@@ -56,7 +64,7 @@ public class GmailEmailSender : IEmailSender
 
         var message = new Message
         {
-            Raw = BuildRawMessage(_senderAddress, toEmail, subject, htmlBody)
+            Raw = BuildRawMessage(senderAddress, toEmail, subject, htmlBody)
         };
 
         await gmailService.Users.Messages.Send(message, "me").ExecuteAsync(cancellationToken);

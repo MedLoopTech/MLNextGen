@@ -4,8 +4,10 @@ using MedLoop.NextGen.Jobs;
 using MedLoop.NextGen.Models;
 using MedLoop.NextGen.Services;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Quartz;
 using QuestPDF.Infrastructure;
+using System.Text.Json.Serialization.Metadata;
 
 // See the licensing note on QuestPdfInvoiceService: Community is free only
 // under QuestPDF's revenue/org-type conditions — confirm eligibility before
@@ -21,7 +23,14 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // single line here once one is wired up — no controller code needs to
 // change, since OrdersController depends only on IPaymentGateway.
 builder.Services.AddScoped<IPaymentGateway, MockPaymentGateway>();
-builder.Services.AddScoped<IEmailSender, GmailEmailSender>();
+
+// Singleton, not Scoped: MapIdentityApi<TUser>() resolves IEmailSender<TUser>
+// from the root service provider once at startup (not per-request), which
+// throws for a Scoped registration ("Cannot resolve scoped service ... from
+// root provider") — caught by actually running the app, not something that
+// shows up at compile time. GmailEmailSender has no Scoped dependencies
+// (just IConfiguration), so Singleton is safe here.
+builder.Services.AddSingleton<IEmailSender, GmailEmailSender>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IInvoiceService, QuestPdfInvoiceService>();
 builder.Services.AddScoped<ILoyaltyService, LoyaltyService>();
@@ -39,8 +48,9 @@ builder.Services
 // registers a no-op IEmailSender<ApplicationUser> via TryAdd, and this
 // explicit registration needs to be the one that wins so account
 // confirmation / password reset emails actually get sent through Gmail
-// instead of silently going nowhere.
-builder.Services.AddScoped<IEmailSender<ApplicationUser>, IdentityEmailSenderAdapter>();
+// instead of silently going nowhere. Singleton for the same root-provider
+// resolution reason as IEmailSender above.
+builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityEmailSenderAdapter>();
 
 var nearExpiryJobKey = new JobKey("NearExpiryNotificationJob");
 var markExpiredJobKey = new JobKey("MarkExpiredListingsJob");
@@ -73,7 +83,66 @@ builder.Services.AddScoped<MarkExpiredListingsJob>();
 
 builder.Services.AddAuthorization();
 builder.Services.AddCascadingAuthenticationState();
-builder.Services.AddControllers();
+
+// Both settings found by actually exercising the API end-to-end, not by
+// inspection — neither shows up as a compile error.
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // 1) System.Text.Json serializes enums (ProductListingStatus,
+        // BidStatus, OrderStatus, etc.) as raw numbers by default, e.g.
+        // {"status":3} instead of {"status":"ForRedistribution"} —
+        // unreadable for any API consumer.
+        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+
+        // 2) EF Core's navigation-property fixup means a Bid returned with
+        // its NegotiationRounds included has, on each round, a populated
+        // `Bid` back-reference to the very same Bid instance — a genuine
+        // reference cycle. Confirmed by actually calling POST /api/bids:
+        // the response never terminated (curl gave up with "transfer
+        // closed with outstanding read data remaining") because the
+        // serializer kept expanding the cycle instead of failing cleanly.
+        // The same shape of bug would hit any entity pair with
+        // bidirectional navigation properties serialized together
+        // (Pharmacy/Product, PosSale/PosSaleItem, etc.), not just Bid —
+        // IgnoreCycles fixes all of them at once by emitting null the
+        // second time an object would repeat, instead of recursing or
+        // throwing.
+        options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+
+        // 3) ApplicationUser extends IdentityUser directly, and several
+        // endpoints return it as a nested navigation property (Bid.BuyerUser,
+        // BidNegotiationRound.ProposedByUser, PosSale.CashierUser, etc.).
+        // Confirmed by actually calling PUT /api/bids/{id}/counter: the
+        // response included the other party's full PasswordHash,
+        // SecurityStamp, and ConcurrencyStamp in plain JSON — a real
+        // credential leak to anyone on the other side of a negotiation, not
+        // a hypothetical. This strips those three fields off ApplicationUser
+        // specifically, everywhere it's serialized, without touching the EF
+        // mapping or requiring every controller to hand-build a DTO.
+        var identitySensitiveFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "PasswordHash", "SecurityStamp", "ConcurrencyStamp"
+        };
+        var resolver = new DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(typeInfo =>
+        {
+            if (typeInfo.Type != typeof(ApplicationUser))
+            {
+                return;
+            }
+
+            foreach (var property in typeInfo.Properties)
+            {
+                if (identitySensitiveFields.Contains(property.Name))
+                {
+                    property.ShouldSerialize = static (_, _) => false;
+                }
+            }
+        });
+        options.JsonSerializerOptions.TypeInfoResolver = resolver;
+    });
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
