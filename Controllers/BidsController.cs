@@ -252,36 +252,9 @@ public class BidsController : ControllerBase
         return NoContent();
     }
 
-    // Deliberately NOT implemented yet. The legacy equivalent
-    // (OfferStatusController.ProcessBidPayments) hardcoded
-    // `bool overallPaymentSuccess = true;` with no actual gateway call —
-    // every checkout "succeeded" and marked the order Paid & Closed
-    // without ever charging anyone. Rather than port that bug forward,
-    // this returns 501 until the real payment gateway integration lands
-    // (see the roadmap in README.md).
-    [HttpPost("{id}/complete-payment")]
-    public async Task<IActionResult> CompletePayment(string id)
-    {
-        var user = await _userManager.GetUserAsync(User);
-        var bid = await _db.Bids.FindAsync(id);
-
-        if (bid is null)
-        {
-            return NotFound();
-        }
-
-        if (user?.PharmacyId != bid.BuyerPharmacyId)
-        {
-            return Forbid();
-        }
-
-        if (bid.Status != BidStatus.Approved)
-        {
-            return BadRequest("Only approved bids can be paid for.");
-        }
-
-        return StatusCode(StatusCodes.Status501NotImplemented,
-            "Payment gateway integration is not implemented yet in this skeleton. " +
-            "This endpoint intentionally does not fake success.");
-    }
+    // Paying for an approved bid lives in OrdersController.Checkout, not
+    // here — creating an Order is really what "completing payment" means,
+    // and that's where the payment gateway call, server-side amount
+    // computation, and stock/order atomicity all belong together. See
+    // POST /api/orders/checkout.
 }

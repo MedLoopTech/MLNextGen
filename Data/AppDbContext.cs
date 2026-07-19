@@ -16,6 +16,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<Bid> Bids => Set<Bid>();
+    public DbSet<Order> Orders => Set<Order>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -113,6 +114,39 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(b => b.ProductId);
             entity.HasIndex(b => b.BuyerPharmacyId);
             entity.HasIndex(b => b.Status);
+        });
+
+        builder.Entity<Order>(entity =>
+        {
+            entity.Property(o => o.Status).HasConversion<string>().HasMaxLength(32);
+
+            entity.HasOne(o => o.Bid)
+                .WithMany()
+                .HasForeignKey(o => o.BidId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(o => o.Product)
+                .WithMany()
+                .HasForeignKey(o => o.ProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(o => o.SellerPharmacy)
+                .WithMany()
+                .HasForeignKey(o => o.SellerPharmacyId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(o => o.BuyerPharmacy)
+                .WithMany()
+                .HasForeignKey(o => o.BuyerPharmacyId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // One order per bid, enforced at the database level — not just
+            // an application-level check — so a retried/duplicated
+            // checkout request can never create two paid orders for the
+            // same bid even under a race.
+            entity.HasIndex(o => o.BidId).IsUnique();
+            entity.HasIndex(o => o.BuyerPharmacyId);
+            entity.HasIndex(o => o.SellerPharmacyId);
         });
     }
 }

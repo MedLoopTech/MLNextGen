@@ -29,8 +29,14 @@ This is **not** a fork of `PharmacyWebapp` and contains none of its code. It's a
   - Approving a bid updates `Product.LockQuantity` under Postgres's `xmin` optimistic-concurrency token (`UseXminAsConcurrencyToken()` in `AppDbContext`), so two approvals racing to lock the same stock get a `409 Conflict` instead of silently over-locking — the legacy code did a plain read-then-write with no protection against exactly that race.
   - `POST /api/bids/{id}/complete-payment` returns `501 Not Implemented` on purpose. The legacy equivalent (`OfferStatusController.ProcessBidPayments`) hardcoded `bool overallPaymentSuccess = true;` with no real gateway call — every checkout "succeeded" and the order was marked Paid & Closed without anyone actually being charged. This skeleton would rather be honestly unfinished than repeat that.
 
+### Orders and payment
+- `Order` + `OrdersController`, with `IPaymentGateway` as a swappable abstraction (`MockPaymentGateway` for now — clearly named, always "succeeds" with a fake reference, registered in `Program.cs`; a real gateway is a one-line DI swap, not a rewrite).
+- `POST /api/orders/checkout` (body: just `{ bidId }`) is the fix for the legacy app's most severe payment bug: `PaymentController.ProcessCheckout` took `amount` as a plain query-string parameter and charged whatever the client sent, with no server-side recomputation — any buyer could edit the URL and pay $0.01 for a real order. Here, the amount is *always* recomputed from the bid's own stored quantity/price plus the server-configured `Marketplace:PlatformFeeRate` (`appsettings.json`); the request body has no amount field at all.
+- Checkout is wrapped in a DB transaction: the gateway is charged first, then stock is decremented and the `Order` is created atomically — if either fails, the whole thing rolls back. A unique index on `Order.BidId` makes it impossible to create two paid orders for the same bid even under a race, on top of the app-level check.
+- Known, documented gap (see the comment on `OrdersController.Checkout`): if the gateway charge succeeds but the DB commit fails, there's currently no automatic refund/reconciliation. That's an explicit TODO to solve *before* swapping in a real (non-mock) gateway — not something to discover in production.
+
 ## What's deliberately NOT here yet
-Orders (post-payment fulfillment), the real payment gateway integration, PDF generation, email, scheduled jobs, the POS module, and the long-tail collections (notifications, feedback, rewards, promo codes, appointments, disposer/technician/distributor workflows). Those get added incrementally per the phased migration plan.
+PDF/invoice generation, email, scheduled jobs, the POS module, order fulfillment/dispute tracking, and the long-tail collections (notifications, feedback, rewards, promo codes, appointments, disposer/technician/distributor workflows). Those get added incrementally per the phased migration plan. A **real** payment gateway integration (replacing `MockPaymentGateway`) is also still pending — see the reconciliation gap noted above before that swap happens.
 
 ## Running locally
 ```bash

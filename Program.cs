@@ -1,11 +1,17 @@
 using MedLoop.NextGen.Data;
 using MedLoop.NextGen.Models;
+using MedLoop.NextGen.Services;
 using Microsoft.AspNetCore.Identity;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+
+// Swap this for a real gateway implementation (e.g. Mastercard/MCB) via a
+// single line here once one is wired up — no controller code needs to
+// change, since OrdersController depends only on IPaymentGateway.
+builder.Services.AddScoped<IPaymentGateway, MockPaymentGateway>();
 
 builder.Services
     .AddIdentityApiEndpoints<ApplicationUser>(options =>
