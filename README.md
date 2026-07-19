@@ -11,10 +11,9 @@ This is **not** a fork of `PharmacyWebapp` and contains none of its code. It's a
 - `Dockerfile` that runs as a non-root user out of the box.
 - `docker-compose.yml` for local development against a real Postgres instance — no cloud account needed to run this locally.
 
-## ⚠️ The portal has not been compiled or run
-This sandbox has no .NET SDK installed, so everything below the API layer was written without the ability to `dotnet build`/`dotnet run` it. The API controllers were built the same way and are lower-risk (plain, well-established ASP.NET Core patterns). **The Blazor Server portal is the single highest-risk part of this repo** — Blazor Server's rendering-mode rules (static vs. interactive component boundaries, where `SignInManager` can and can't write to the HTTP response) are genuinely easy to get subtly wrong without compiling. **Before relying on this, build it locally first** and be ready to fix compiler errors, especially around:
-- `Components/App.razor`, `Components/Routes.razor` and the render-mode boundaries between static pages (`Login`, `Register`, `Home`) and interactive ones (`Marketplace`, `Bids`, `Orders`).
-- The plain HTTP form-post login/register/logout endpoints in `Program.cs` — this pattern (avoiding Blazor interactive forms specifically so `SignInManager` can write the auth cookie) is correct in principle but the most likely spot for something to need adjusting.
+## ✅ Verified against a real Postgres instance, not just compiled
+Earlier revisions of this README warned the portal had only been written, never run. That's no longer true: it's been built and driven end-to-end against a real local Postgres 16 database — register, browse the marketplace, place a bid, counter-offer both directions, accept, checkout, download the invoice PDF, list orders as both buyer and seller. That testing caught (and fixed) several real bugs that pure code review missed, including two startup-crashing DI/config issues, an enum-serialization bug, a JSON reference-cycle bug that hung the bid endpoints, and a real security bug where the other negotiating party's Identity password hash was leaking in plain JSON. See the git history on `Models/BidNegotiationRound.cs`, `Models/PosSaleItem.cs`, and `Program.cs`'s JSON options for the details.
+That said, this is still a fast-moving skeleton, not a hardened production app — treat anything not explicitly called out as tested elsewhere in this README with appropriate caution.
 
 ## The B2B portal (Blazor Server)
 Added in the same project as the API, not a separate frontend stack — same language, and it plugs directly into the ASP.NET Core Identity cookie auth already in place.
@@ -127,13 +126,18 @@ Real-time push (these are polled/in-app notifications plus email, not sockets/we
 ```bash
 docker compose up --build
 ```
-The API comes up on `http://localhost:8080`, with Swagger UI at `/swagger` in Development. Migrations run automatically against the `db` container on startup.
+The app comes up on `http://localhost:8080` (portal at `/`, Swagger UI at `/swagger` in Development). The `InitialCreate` migration is already committed under `Migrations/` and applies automatically against the `db` container on startup — no `dotnet ef migrations add` step needed before the first run.
 
-First time only — create the initial EF Core migration before the first run:
-```bash
-dotnet tool install --global dotnet-ef   # if not already installed
-dotnet ef migrations add InitialCreate
-```
+### Demo accounts (seeded automatically in Development)
+On first startup, `Data/DbSeeder.cs` creates three accounts and two marketplace listings so there's something to click on immediately, instead of a blank slate that needs manual registration first. Seeding is idempotent — it checks for each record before creating it, so restarting the app (or `docker compose up` again against the same volume) never duplicates anything.
+
+| Email | Password | Role |
+|---|---|---|
+| `seller@medloop.test` | `MedLoopDemo123!` | Staff of "Demo Seller Pharmacy" — has two `ForRedistribution` listings (Paracetamol 500mg, Amoxicillin 250mg) ready to bid on. |
+| `buyer@medloop.test` | `MedLoopDemo123!` | Staff of "Demo Buyer Pharmacy" — use this to place a bid on the seller's listings. |
+| `admin@medloop.test` | `MedLoopDemo123!` | In the `Admin` role — can manage categories and resolve order disputes. |
+
+These are dev-only convenience accounts with a shared, publicly-documented password — the seeder only runs when `ASPNETCORE_ENVIRONMENT=Development` (see `Program.cs`), and must never run against a production database.
 
 ## Running against a real (cloud) Postgres instead of the local container
 Set the `ConnectionStrings__Default` environment variable (or an untracked `appsettings.Production.json`) to a real connection string — e.g. a Neon.tech database — and skip `docker-compose.yml`'s `db` service.

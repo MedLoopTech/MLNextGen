@@ -165,6 +165,11 @@ if (app.Environment.IsDevelopment())
     // Production should run migrations as an explicit release step instead of on every boot.
     using var scope = app.Services.CreateScope();
     await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.MigrateAsync();
+
+    // Seeds a ready-to-use seller/buyer/admin account plus two demo listings
+    // on first run, so the portal isn't empty until someone registers
+    // manually. Idempotent — see DbSeeder for the per-record existence checks.
+    await DbSeeder.SeedAsync(scope.ServiceProvider);
 }
 
 app.UseHttpsRedirection();
