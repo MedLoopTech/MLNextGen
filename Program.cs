@@ -23,6 +23,7 @@ builder.Services.AddScoped<IPaymentGateway, MockPaymentGateway>();
 builder.Services.AddScoped<IEmailSender, GmailEmailSender>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IInvoiceService, QuestPdfInvoiceService>();
+builder.Services.AddScoped<ILoyaltyService, LoyaltyService>();
 
 builder.Services
     .AddIdentityApiEndpoints<ApplicationUser>(options =>

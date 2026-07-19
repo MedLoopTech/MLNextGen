@@ -24,16 +24,25 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<PosSaleItem> PosSaleItems => Set<PosSaleItem>();
     public DbSet<PromoCode> PromoCodes => Set<PromoCode>();
     public DbSet<OrderFeedback> OrderFeedbacks => Set<OrderFeedback>();
+    public DbSet<TakeBackSubmission> TakeBackSubmissions => Set<TakeBackSubmission>();
+    public DbSet<LoyaltyPointTransaction> LoyaltyPointTransactions => Set<LoyaltyPointTransaction>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
 
-        builder.Entity<ApplicationUser>()
-            .HasOne(u => u.Pharmacy)
-            .WithMany(p => p.Users)
-            .HasForeignKey(u => u.PharmacyId)
-            .OnDelete(DeleteBehavior.SetNull);
+        builder.Entity<ApplicationUser>(entity =>
+        {
+            entity.HasOne(u => u.Pharmacy)
+                .WithMany(p => p.Users)
+                .HasForeignKey(u => u.PharmacyId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // Protects LoyaltyPoints from a lost update if two things try
+            // to award/redeem points for the same user concurrently (see
+            // LoyaltyService) — same reasoning as Product's stock locking.
+            entity.UseXminAsConcurrencyToken();
+        });
 
         builder.Entity<Branch>(entity =>
         {
@@ -267,6 +276,41 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // One feedback submission per order per side — enforced here,
             // not just checked in application code.
             entity.HasIndex(f => new { f.OrderId, f.SubmittedBy }).IsUnique();
+        });
+
+        builder.Entity<TakeBackSubmission>(entity =>
+        {
+            entity.Property(t => t.Status).HasConversion<string>().HasMaxLength(16);
+
+            entity.HasOne(t => t.SubmittedByUser)
+                .WithMany()
+                .HasForeignKey(t => t.SubmittedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(t => t.PartnerPharmacy)
+                .WithMany()
+                .HasForeignKey(t => t.PartnerPharmacyId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(t => t.VerifiedByUser)
+                .WithMany()
+                .HasForeignKey(t => t.VerifiedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(t => t.SubmittedByUserId);
+            entity.HasIndex(t => new { t.PartnerPharmacyId, t.Status });
+        });
+
+        builder.Entity<LoyaltyPointTransaction>(entity =>
+        {
+            entity.Property(t => t.Reason).HasConversion<string>().HasMaxLength(32);
+
+            entity.HasOne(t => t.User)
+                .WithMany()
+                .HasForeignKey(t => t.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(t => t.UserId);
         });
     }
 }
