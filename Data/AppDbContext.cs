@@ -15,6 +15,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Product> Products => Set<Product>();
+    public DbSet<Bid> Bids => Set<Bid>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -79,6 +80,39 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(p => p.PharmacyId);
             entity.HasIndex(p => p.Status);
             entity.HasIndex(p => p.ExpiryDate);
+
+            // Postgres's system xmin column as an optimistic concurrency
+            // token: any update to a Product (e.g. two bid approvals racing
+            // to lock stock on the same listing) that's based on a stale
+            // read now throws DbUpdateConcurrencyException instead of
+            // silently overwriting. This is the fix for the legacy
+            // BidApprovalController's read-LockQuantity-then-write race,
+            // which had no protection against exactly that scenario.
+            entity.UseXminAsConcurrencyToken();
+        });
+
+        builder.Entity<Bid>(entity =>
+        {
+            entity.Property(b => b.Status).HasConversion<string>().HasMaxLength(32);
+
+            entity.HasOne(b => b.Product)
+                .WithMany()
+                .HasForeignKey(b => b.ProductId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(b => b.BuyerPharmacy)
+                .WithMany()
+                .HasForeignKey(b => b.BuyerPharmacyId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(b => b.BuyerUser)
+                .WithMany()
+                .HasForeignKey(b => b.BuyerUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(b => b.ProductId);
+            entity.HasIndex(b => b.BuyerPharmacyId);
+            entity.HasIndex(b => b.Status);
         });
     }
 }
