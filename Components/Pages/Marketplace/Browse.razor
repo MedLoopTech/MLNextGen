@@ -1,0 +1,79 @@
+@page "/marketplace"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject UserManager<ApplicationUser> UserManager
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Marketplace — MedLoop</PageTitle>
+
+<h3 class="mb-3">Marketplace</h3>
+<p class="text-muted">Listings other pharmacies have made available for redistribution.</p>
+
+@if (_loading)
+{
+    <p>Loading…</p>
+}
+else if (_listings.Count == 0)
+{
+    <p>No listings available right now.</p>
+}
+else
+{
+    <table class="table table-striped align-middle">
+        <thead>
+            <tr>
+                <th>Product</th>
+                <th>Pharmacy</th>
+                <th>Manufacturer</th>
+                <th>Expiry</th>
+                <th>Available</th>
+                <th>Price</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var product in _listings)
+            {
+                <tr>
+                    <td>@product.Name</td>
+                    <td>@(product.Pharmacy?.Name ?? product.PharmacyId)</td>
+                    <td>@product.Manufacturer</td>
+                    <td>@(product.ExpiryDate?.ToString("yyyy-MM-dd") ?? "—")</td>
+                    <td>@product.AvailableQuantity</td>
+                    <td>@(product.Price?.ToString("C") ?? "—")</td>
+                    <td><a class="btn btn-sm btn-primary" href="@($"/marketplace/{product.Id}")">View &amp; bid</a></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<Product> _listings = new();
+    private bool _loading = true;
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState!;
+        var user = await UserManager.GetUserAsync(authState.User);
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        var query = Db.Products
+            .Include(p => p.Pharmacy)
+            .Where(p => p.Status == ProductListingStatus.ForRedistribution)
+            .Where(p => p.ExpiryDate == null || p.ExpiryDate >= today);
+
+        if (user?.PharmacyId is not null)
+        {
+            query = query.Where(p => p.PharmacyId != user.PharmacyId);
+        }
+
+        _listings = await query.OrderBy(p => p.ExpiryDate).ToListAsync();
+        _loading = false;
+    }
+}

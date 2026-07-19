@@ -5,11 +5,35 @@ A from-scratch parallel implementation proving out the "next version" stack prop
 This is **not** a fork of `PharmacyWebapp` and contains none of its code. It's a clean skeleton meant to be extended module by module, following the incremental migration plan written up for the legacy app.
 
 ## What's in this skeleton
-- ASP.NET Core 8 Web API project.
+- ASP.NET Core 8 Web API project, **plus a Blazor Server portal** (see below) in the same project.
 - PostgreSQL via EF Core + Npgsql, with migrations applied automatically on startup in Development.
-- Real authentication via ASP.NET Core Identity (`AddIdentityApiEndpoints` — built-in `/register`, `/login`, `/refresh` endpoints), with role support wired up (`AddRoles<IdentityRole>()`).
+- Real authentication via ASP.NET Core Identity (`AddIdentityApiEndpoints` — built-in `/register`, `/login`, `/refresh` endpoints for API/SPA clients), with role support wired up (`AddRoles<IdentityRole>()`).
 - `Dockerfile` that runs as a non-root user out of the box.
 - `docker-compose.yml` for local development against a real Postgres instance — no cloud account needed to run this locally.
+
+## ⚠️ The portal has not been compiled or run
+This sandbox has no .NET SDK installed, so everything below the API layer was written without the ability to `dotnet build`/`dotnet run` it. The API controllers were built the same way and are lower-risk (plain, well-established ASP.NET Core patterns). **The Blazor Server portal is the single highest-risk part of this repo** — Blazor Server's rendering-mode rules (static vs. interactive component boundaries, where `SignInManager` can and can't write to the HTTP response) are genuinely easy to get subtly wrong without compiling. **Before relying on this, build it locally first** and be ready to fix compiler errors, especially around:
+- `Components/App.razor`, `Components/Routes.razor` and the render-mode boundaries between static pages (`Login`, `Register`, `Home`) and interactive ones (`Marketplace`, `Bids`, `Orders`).
+- The plain HTTP form-post login/register/logout endpoints in `Program.cs` — this pattern (avoiding Blazor interactive forms specifically so `SignInManager` can write the auth cookie) is correct in principle but the most likely spot for something to need adjusting.
+
+## The B2B portal (Blazor Server)
+Added in the same project as the API, not a separate frontend stack — same language, and it plugs directly into the ASP.NET Core Identity cookie auth already in place.
+
+**Scoped to the B2B flow only, as requested** — it does not cover POS or the take-back/loyalty program yet.
+
+- `/account/login`, `/account/register` — plain static HTML forms (not Blazor `EditForm`) posting to minimal-API endpoints in `Program.cs` that call `SignInManager` directly. Registering with a pharmacy name creates a new `Pharmacy` and joins it as staff; leaving it blank registers a plain consumer account.
+- `/marketplace` — browse other pharmacies' `ForRedistribution` listings.
+- `/marketplace/{id}` — listing detail + place a bid.
+- `/bids/mine` — your bids as buyer: accept/reject/counter a seller's counter-offer, or cancel an open negotiation.
+- `/bids/incoming` — bids on your own listings as seller: accept/reject/counter a buyer's offer.
+- `/orders/mine` — approved bids ready to check out (with optional promo code), plus your purchase and sales history.
+- `/orders/{id}` — order detail, invoice download (links directly to the existing `GET /api/orders/{id}/invoice` REST endpoint — the one place the portal reuses the API instead of duplicating logic, since the browser's own auth cookie covers that same-origin request), fulfill (seller), raise a dispute, leave feedback.
+
+### Known architectural shortcut — the portal duplicates controller logic
+To move fast, portal pages call `AppDbContext` and the domain services (`INotificationService`, `IPaymentGateway`, `ILoyaltyService`) **directly**, re-implementing the same validation/business rules that already exist in `BidsController`/`OrdersController` (ownership checks, stock/concurrency handling, server-side amount computation) rather than calling those controllers over HTTP. This was a deliberate tradeoff to avoid the complexity of forwarding the Identity auth cookie into internal API calls, but it means **the same business rule now has two places it could drift out of sync**. The right fix, once the portal is confirmed working: extract the logic currently living in `BidsController.Accept/Reject/Counter` and `OrdersController.Checkout` into shared service classes (e.g. `IBidWorkflowService`, extending the pattern already used by `ILoyaltyService`), and have both the API controllers and the portal call those services instead of duplicating the logic inline.
+
+### Known gap — auth form CSRF protection
+The plain login/register/logout forms use `.DisableAntiforgery()` in `Program.cs` because they don't currently include an antiforgery token. This should be fixed (via Blazor's `<AntiforgeryToken />` component plus server-side validation) before production — it's the same class of gap (missing CSRF protection) the legacy app's audit flagged as an actively exploitable pattern, just newly introduced here rather than carried over.
 
 ### Entities/modules implemented so far
 - `Pharmacy`, `ApplicationUser` (FK'd to a pharmacy).

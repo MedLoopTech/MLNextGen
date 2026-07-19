@@ -1,3 +1,4 @@
+using MedLoop.NextGen.Components;
 using MedLoop.NextGen.Data;
 using MedLoop.NextGen.Jobs;
 using MedLoop.NextGen.Models;
@@ -71,9 +72,18 @@ builder.Services.AddScoped<NearExpiryNotificationJob>();
 builder.Services.AddScoped<MarkExpiredListingsJob>();
 
 builder.Services.AddAuthorization();
+builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+// The B2B portal: Blazor Server, added alongside the existing API
+// controllers in this same project rather than a separate frontend stack.
+// Pages call AppDbContext/services directly (not through the REST API) —
+// see the README for why, and the refactor this implies once the portal
+// is confirmed working end-to-end.
+builder.Services.AddRazorComponents()
+    .AddInteractiveServerComponents();
 
 var app = builder.Build();
 
@@ -89,10 +99,96 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseAntiforgery();
 
 app.MapIdentityApi<ApplicationUser>();
 app.MapControllers();
+
+// Plain HTTP form-post endpoints for the portal's login/register/logout,
+// rather than Blazor interactive EditForms. This sidesteps a known class
+// of Blazor Server timing issue (SignInManager/HttpContext.SignInAsync
+// needs to write to the HTTP response, which isn't possible once an
+// interactive SignalR circuit has already been established) — these pages
+// render as plain static HTML forms instead.
+//
+// KNOWN GAP, called out rather than silently skipped: .DisableAntiforgery()
+// is used here because the plain forms don't currently include an
+// antiforgery token. This should be fixed (via Blazor's <AntiforgeryToken />
+// component plus validating it here) before this goes to production — the
+// legacy app's audit flagged missing CSRF protection as a real, exploited
+// pattern, and this is the same class of gap, just in new code.
+app.MapPost("/account/login-form", async (HttpContext httpContext, SignInManager<ApplicationUser> signInManager) =>
+{
+    var form = await httpContext.Request.ReadFormAsync();
+    var email = form["email"].ToString();
+    var password = form["password"].ToString();
+    var returnUrl = form["returnUrl"].ToString();
+
+    var result = await signInManager.PasswordSignInAsync(email, password, isPersistent: true, lockoutOnFailure: false);
+    if (!result.Succeeded)
+    {
+        return Results.Redirect($"/account/login?error=1&returnUrl={Uri.EscapeDataString(returnUrl)}");
+    }
+
+    return Results.Redirect(string.IsNullOrWhiteSpace(returnUrl) ? "/" : returnUrl);
+}).DisableAntiforgery();
+
+app.MapPost("/account/register-form", async (
+    HttpContext httpContext,
+    UserManager<ApplicationUser> userManager,
+    SignInManager<ApplicationUser> signInManager,
+    AppDbContext db) =>
+{
+    var form = await httpContext.Request.ReadFormAsync();
+    var email = form["email"].ToString();
+    var password = form["password"].ToString();
+    var displayName = form["displayName"].ToString();
+    var pharmacyName = form["pharmacyName"].ToString();
+    var returnUrl = form["returnUrl"].ToString();
+
+    // Registering with a pharmacy name creates a new pharmacy and joins it
+    // as staff; leaving it blank registers a plain consumer account (used
+    // by the B2C take-back/loyalty flow) — no separate account-type toggle
+    // needed.
+    string? pharmacyId = null;
+
+    if (!string.IsNullOrWhiteSpace(pharmacyName))
+    {
+        var pharmacy = new Pharmacy { Name = pharmacyName };
+        db.Pharmacies.Add(pharmacy);
+        await db.SaveChangesAsync();
+        pharmacyId = pharmacy.Id;
+    }
+
+    var user = new ApplicationUser
+    {
+        UserName = email,
+        Email = email,
+        DisplayName = string.IsNullOrWhiteSpace(displayName) ? email : displayName,
+        PharmacyId = pharmacyId
+    };
+
+    var result = await userManager.CreateAsync(user, password);
+    if (!result.Succeeded)
+    {
+        var errors = string.Join("; ", result.Errors.Select(e => e.Description));
+        return Results.Redirect($"/account/register?error={Uri.EscapeDataString(errors)}");
+    }
+
+    await signInManager.SignInAsync(user, isPersistent: true);
+    return Results.Redirect(string.IsNullOrWhiteSpace(returnUrl) ? "/" : returnUrl);
+}).DisableAntiforgery();
+
+app.MapPost("/account/logout", async (SignInManager<ApplicationUser> signInManager) =>
+{
+    await signInManager.SignOutAsync();
+    return Results.Redirect("/");
+}).DisableAntiforgery();
+
+app.MapRazorComponents<App>()
+    .AddInteractiveServerRenderMode();
 
 app.Run();

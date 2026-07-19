@@ -1,0 +1,51 @@
+@page "/account/register"
+
+<PageTitle>Register — MedLoop</PageTitle>
+
+<div class="row justify-content-center">
+    <div class="col-md-5">
+        <h3 class="mb-3">Create an account</h3>
+
+        @if (!string.IsNullOrEmpty(Error))
+        {
+            <div class="alert alert-danger">@Error</div>
+        }
+
+        <form method="post" action="/account/register-form">
+            <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+            <div class="mb-3">
+                <label class="form-label">Display name</label>
+                <input type="text" name="displayName" class="form-control" required autofocus />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Email</label>
+                <input type="email" name="email" class="form-control" required />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Password</label>
+                <input type="password" name="password" class="form-control" required minlength="12" />
+                <div class="form-text">At least 12 characters.</div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Pharmacy name <span class="text-muted">(optional)</span></label>
+                <input type="text" name="pharmacyName" class="form-control" />
+                <div class="form-text">
+                    Fill this in if you're registering as a pharmacy that will list/buy stock on the B2B
+                    marketplace — a new pharmacy record is created and you become its first staff account.
+                    Leave it blank to register as a consumer (for the medicine take-back / loyalty points program).
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary w-100">Register</button>
+        </form>
+
+        <p class="mt-3">Already have an account? <a href="/account/login">Log in</a></p>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    private string? ReturnUrl { get; set; }
+}

@@ -1,0 +1,19 @@
+@page "/"
+
+<PageTitle>MedLoop NextGen</PageTitle>
+
+<div class="text-center py-5">
+    <h1>MedLoop NextGen</h1>
+    <p class="lead">B2B redistribution marketplace portal.</p>
+
+    <AuthorizeView>
+        <Authorized>
+            <a class="btn btn-primary me-2" href="/marketplace">Browse the marketplace</a>
+            <a class="btn btn-outline-secondary" href="/orders/mine">My orders</a>
+        </Authorized>
+        <NotAuthorized>
+            <a class="btn btn-primary me-2" href="/account/login">Log in</a>
+            <a class="btn btn-outline-secondary" href="/account/register">Register</a>
+        </NotAuthorized>
+    </AuthorizeView>
+</div>

@@ -1,0 +1,178 @@
+@page "/marketplace/{ProductId}"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject UserManager<ApplicationUser> UserManager
+@inject INotificationService Notifications
+@inject NavigationManager Nav
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>@(_product?.Name ?? "Product") — MedLoop</PageTitle>
+
+@if (_loading)
+{
+    <p>Loading…</p>
+}
+else if (_product is null)
+{
+    <p>Listing not found.</p>
+}
+else
+{
+    <div class="row">
+        <div class="col-md-7">
+            <h3>@_product.Name</h3>
+            <dl class="row">
+                <dt class="col-sm-4">Seller</dt><dd class="col-sm-8">@(_product.Pharmacy?.Name ?? _product.PharmacyId)</dd>
+                <dt class="col-sm-4">Manufacturer</dt><dd class="col-sm-8">@_product.Manufacturer</dd>
+                <dt class="col-sm-4">Dosage form</dt><dd class="col-sm-8">@_product.DosageForm</dd>
+                <dt class="col-sm-4">Batch</dt><dd class="col-sm-8">@_product.BatchNumber</dd>
+                <dt class="col-sm-4">Expiry</dt><dd class="col-sm-8">@(_product.ExpiryDate?.ToString("yyyy-MM-dd") ?? "—")</dd>
+                <dt class="col-sm-4">Available quantity</dt><dd class="col-sm-8">@_product.AvailableQuantity</dd>
+                <dt class="col-sm-4">List price</dt><dd class="col-sm-8">@(_product.Price?.ToString("C") ?? "—") / unit</dd>
+            </dl>
+        </div>
+
+        <div class="col-md-5">
+            @if (_isOwnListing)
+            {
+                <div class="alert alert-info">This is your own pharmacy's listing.</div>
+            }
+            else if (_hasOpenBid)
+            {
+                <div class="alert alert-info">You already have an open bid/negotiation on this listing — see <a href="/bids/mine">My Bids</a>.</div>
+            }
+            else
+            {
+                <div class="card">
+                    <div class="card-header">Place a bid</div>
+                    <div class="card-body">
+                        @if (!string.IsNullOrEmpty(_error))
+                        {
+                            <div class="alert alert-danger">@_error</div>
+                        }
+                        <EditForm Model="_form" OnValidSubmit="SubmitBid">
+                            <div class="mb-3">
+                                <label class="form-label">Quantity</label>
+                                <InputNumber class="form-control" @bind-Value="_form.Quantity" />
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Price per unit</label>
+                                <InputNumber class="form-control" @bind-Value="_form.PricePerUnit" />
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Message (optional)</label>
+                                <InputTextArea class="form-control" @bind-Value="_form.Message" />
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Send offer</button>
+                        </EditForm>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public string ProductId { get; set; } = string.Empty;
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    private Product? _product;
+    private bool _loading = true;
+    private bool _isOwnListing;
+    private bool _hasOpenBid;
+    private string? _error;
+    private readonly BidForm _form = new();
+
+    private class BidForm
+    {
+        public int Quantity { get; set; } = 1;
+        public double PricePerUnit { get; set; }
+        public string? Message { get; set; }
+    }
+
+    private ApplicationUser? _user;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState!;
+        _user = await UserManager.GetUserAsync(authState.User);
+
+        _product = await Db.Products.Include(p => p.Pharmacy).FirstOrDefaultAsync(p => p.Id == ProductId);
+
+        if (_product is not null && _user is not null)
+        {
+            _isOwnListing = _product.PharmacyId == _user.PharmacyId;
+
+            _hasOpenBid = await Db.Bids.AnyAsync(b =>
+                b.ProductId == ProductId &&
+                b.BuyerPharmacyId == _user.PharmacyId &&
+                (b.Status == BidStatus.Pending || b.Status == BidStatus.CounteredBySeller || b.Status == BidStatus.CounteredByBuyer));
+
+            _form.PricePerUnit = _product.Price ?? 0;
+            _form.Quantity = _product.AvailableQuantity;
+        }
+
+        _loading = false;
+    }
+
+    // Mirrors BidsController.Create's validation — see the README for why
+    // this duplication exists for now (the portal calls the DbContext
+    // directly rather than the REST API).
+    private async Task SubmitBid()
+    {
+        _error = null;
+
+        if (_user?.PharmacyId is null || _product is null)
+        {
+            _error = "You must be registered as pharmacy staff to place a bid.";
+            return;
+        }
+
+        if (_form.Quantity <= 0 || _form.PricePerUnit <= 0)
+        {
+            _error = "Quantity and price must be greater than zero.";
+            return;
+        }
+
+        if (_form.Quantity > _product.AvailableQuantity)
+        {
+            _error = $"Only {_product.AvailableQuantity} units are available.";
+            return;
+        }
+
+        var bid = new Bid
+        {
+            ProductId = _product.Id,
+            BuyerPharmacyId = _user.PharmacyId,
+            BuyerUserId = _user.Id,
+            OfferQuantity = _form.Quantity,
+            OfferPricePerUnit = _form.PricePerUnit,
+            Message = _form.Message,
+            LastProposedBy = NegotiationParty.Buyer
+        };
+
+        Db.Bids.Add(bid);
+        Db.BidNegotiationRounds.Add(new BidNegotiationRound
+        {
+            BidId = bid.Id,
+            ProposedBy = NegotiationParty.Buyer,
+            ProposedByUserId = _user.Id,
+            Quantity = bid.OfferQuantity,
+            PricePerUnit = bid.OfferPricePerUnit,
+            Message = bid.Message
+        });
+
+        await Db.SaveChangesAsync();
+
+        await Notifications.NotifyPharmacyAsync(
+            _product.PharmacyId,
+            "New bid received",
+            $"A bid was placed on {_product.Name}: {bid.OfferQuantity} units at {bid.OfferPricePerUnit:C} each.");
+
+        Nav.NavigateTo("/bids/mine");
+    }
+}

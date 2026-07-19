@@ -1,0 +1,35 @@
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark px-3">
+    <a class="navbar-brand" href="/">MedLoop NextGen</a>
+
+    <div class="collapse navbar-collapse">
+        <ul class="navbar-nav me-auto">
+            <AuthorizeView>
+                <Authorized>
+                    <li class="nav-item"><a class="nav-link" href="/marketplace">Marketplace</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/bids/mine">My Bids</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/bids/incoming">Incoming Bids</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/orders/mine">My Orders</a></li>
+                </Authorized>
+            </AuthorizeView>
+        </ul>
+
+        <ul class="navbar-nav">
+            <AuthorizeView>
+                <Authorized>
+                    <li class="nav-item d-flex align-items-center text-light me-2">
+                        <small>@context.User.Identity?.Name</small>
+                    </li>
+                    <li class="nav-item">
+                        <form method="post" action="/account/logout">
+                            <button type="submit" class="btn btn-outline-light btn-sm">Log out</button>
+                        </form>
+                    </li>
+                </Authorized>
+                <NotAuthorized>
+                    <li class="nav-item"><a class="nav-link" href="/account/login">Log in</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/account/register">Register</a></li>
+                </NotAuthorized>
+            </AuthorizeView>
+        </ul>
+    </div>
+</nav>

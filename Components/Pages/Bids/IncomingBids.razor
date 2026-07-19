@@ -1,0 +1,232 @@
+@page "/bids/incoming"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject UserManager<ApplicationUser> UserManager
+@inject INotificationService Notifications
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Incoming Bids — MedLoop</PageTitle>
+
+<h3 class="mb-3">Incoming Bids</h3>
+<p class="text-muted">Bids other pharmacies have placed on your listings.</p>
+
+@if (_loading)
+{
+    <p>Loading…</p>
+}
+else if (_bids.Count == 0)
+{
+    <p>No incoming bids right now.</p>
+}
+else
+{
+    <table class="table align-middle">
+        <thead>
+            <tr>
+                <th>Product</th>
+                <th>Buyer</th>
+                <th>Quantity</th>
+                <th>Price/unit</th>
+                <th>Status</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var bid in _bids)
+            {
+                <tr>
+                    <td>@(bid.Product?.Name ?? bid.ProductId)</td>
+                    <td>@(bid.BuyerPharmacy?.Name ?? bid.BuyerPharmacyId)</td>
+                    <td>@bid.OfferQuantity</td>
+                    <td>@bid.OfferPricePerUnit.ToString("C")</td>
+                    <td><span class="badge bg-secondary">@bid.Status</span></td>
+                    <td>
+                        @if (bid.Status is BidStatus.Pending or BidStatus.CounteredByBuyer)
+                        {
+                            <button class="btn btn-sm btn-success me-1" @onclick="() => Accept(bid)">Accept</button>
+                            <button class="btn btn-sm btn-outline-danger me-1" @onclick="() => ToggleAction(bid.Id, ActionType.Reject)">Reject</button>
+                            <button class="btn btn-sm btn-outline-primary" @onclick="() => ToggleAction(bid.Id, ActionType.Counter)">Counter</button>
+                        }
+                    </td>
+                </tr>
+                @if (_actioningBidId == bid.Id)
+                {
+                    <tr>
+                        <td colspan="6" class="bg-light">
+                            @if (_actionType == ActionType.Reject)
+                            {
+                                <div class="input-group">
+                                    <input class="form-control" placeholder="Reason for rejecting" @bind="_reasonOrMessage" />
+                                    <button class="btn btn-danger" @onclick="() => Reject(bid)">Confirm reject</button>
+                                </div>
+                            }
+                            else if (_actionType == ActionType.Counter)
+                            {
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-auto">
+                                        <label class="form-label small">Quantity</label>
+                                        <input type="number" class="form-control" @bind="_counterQuantity" />
+                                    </div>
+                                    <div class="col-auto">
+                                        <label class="form-label small">Price/unit</label>
+                                        <input type="number" step="0.01" class="form-control" @bind="_counterPrice" />
+                                    </div>
+                                    <div class="col">
+                                        <label class="form-label small">Message</label>
+                                        <input class="form-control" @bind="_reasonOrMessage" />
+                                    </div>
+                                    <div class="col-auto">
+                                        <button class="btn btn-primary" @onclick="() => Counter(bid)">Send counter</button>
+                                    </div>
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(_error))
+                            {
+                                <div class="text-danger mt-1">@_error</div>
+                            }
+                        </td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private enum ActionType { Reject, Counter }
+
+    private List<Bid> _bids = new();
+    private bool _loading = true;
+    private string? _error;
+
+    private string? _actioningBidId;
+    private ActionType _actionType;
+    private string _reasonOrMessage = string.Empty;
+    private int _counterQuantity;
+    private double _counterPrice;
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    private ApplicationUser? _user;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState!;
+        _user = await UserManager.GetUserAsync(authState.User);
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        if (_user?.PharmacyId is null)
+        {
+            _bids = new();
+            _loading = false;
+            return;
+        }
+
+        _bids = await Db.Bids
+            .Include(b => b.Product)
+            .Include(b => b.BuyerPharmacy)
+            .Where(b => b.Product != null && b.Product.PharmacyId == _user.PharmacyId)
+            .OrderByDescending(b => b.CreatedAt)
+            .ToListAsync();
+
+        _loading = false;
+    }
+
+    private void ToggleAction(string bidId, ActionType type)
+    {
+        _actioningBidId = _actioningBidId == bidId && _actionType == type ? null : bidId;
+        _actionType = type;
+        _error = null;
+        _reasonOrMessage = string.Empty;
+    }
+
+    private async Task Accept(Bid bid)
+    {
+        var fresh = await Db.Bids.Include(b => b.Product).FirstAsync(b => b.Id == bid.Id);
+        if (fresh.Product is null || fresh.OfferQuantity > fresh.Product.AvailableQuantity)
+        {
+            _error = "Insufficient stock to accept.";
+            return;
+        }
+
+        fresh.Product.LockQuantity += fresh.OfferQuantity;
+        fresh.Status = BidStatus.Approved;
+        fresh.DecidedAt = DateTime.UtcNow;
+
+        try
+        {
+            await Db.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            _error = "Stock changed concurrently — please refresh and try again.";
+            return;
+        }
+
+        await Notifications.NotifyPharmacyAsync(fresh.BuyerPharmacyId, "Bid accepted", $"Your bid on {fresh.Product.Name} was accepted. Proceed to checkout to complete the order.");
+        await Reload();
+    }
+
+    private async Task Reject(Bid bid)
+    {
+        if (string.IsNullOrWhiteSpace(_reasonOrMessage))
+        {
+            _error = "A reason is required.";
+            return;
+        }
+
+        var fresh = await Db.Bids.Include(b => b.Product).FirstAsync(b => b.Id == bid.Id);
+        fresh.Status = BidStatus.Rejected;
+        fresh.RejectionReason = _reasonOrMessage;
+        fresh.DecidedAt = DateTime.UtcNow;
+        await Db.SaveChangesAsync();
+
+        await Notifications.NotifyPharmacyAsync(fresh.BuyerPharmacyId, "Bid rejected", $"Your bid on {fresh.Product?.Name} was rejected: {_reasonOrMessage}");
+
+        _actioningBidId = null;
+        await Reload();
+    }
+
+    private async Task Counter(Bid bid)
+    {
+        if (_counterQuantity <= 0 || _counterPrice <= 0)
+        {
+            _error = "Quantity and price must be greater than zero.";
+            return;
+        }
+
+        var fresh = await Db.Bids.Include(b => b.Product).FirstAsync(b => b.Id == bid.Id);
+        if (fresh.Product is null || _counterQuantity > fresh.Product.AvailableQuantity)
+        {
+            _error = "Not enough stock available for that quantity.";
+            return;
+        }
+
+        fresh.OfferQuantity = _counterQuantity;
+        fresh.OfferPricePerUnit = _counterPrice;
+        fresh.Message = _reasonOrMessage;
+        fresh.LastProposedBy = NegotiationParty.Seller;
+        fresh.Status = BidStatus.CounteredBySeller;
+
+        Db.BidNegotiationRounds.Add(new BidNegotiationRound
+        {
+            BidId = fresh.Id,
+            ProposedBy = NegotiationParty.Seller,
+            ProposedByUserId = _user!.Id,
+            Quantity = _counterQuantity,
+            PricePerUnit = _counterPrice,
+            Message = _reasonOrMessage
+        });
+
+        await Db.SaveChangesAsync();
+        await Notifications.NotifyPharmacyAsync(fresh.BuyerPharmacyId, "Counter-offer received", $"A counter-offer was made on {fresh.Product.Name}.");
+
+        _actioningBidId = null;
+        await Reload();
+    }
+}

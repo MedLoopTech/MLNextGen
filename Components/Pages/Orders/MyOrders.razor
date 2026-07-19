@@ -1,0 +1,261 @@
+@page "/orders/mine"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject UserManager<ApplicationUser> UserManager
+@inject IPaymentGateway PaymentGateway
+@inject INotificationService Notifications
+@inject IConfiguration Configuration
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Orders — MedLoop</PageTitle>
+
+<h3 class="mb-3">Ready to check out</h3>
+@if (_approvedBids.Count == 0)
+{
+    <p class="text-muted">No approved bids awaiting payment.</p>
+}
+else
+{
+    <table class="table align-middle mb-5">
+        <thead>
+            <tr><th>Product</th><th>Quantity</th><th>Price/unit</th><th>Total</th><th></th></tr>
+        </thead>
+        <tbody>
+            @foreach (var bid in _approvedBids)
+            {
+                <tr>
+                    <td>@(bid.Product?.Name ?? bid.ProductId)</td>
+                    <td>@bid.OfferQuantity</td>
+                    <td>@bid.OfferPricePerUnit.ToString("C")</td>
+                    <td>@bid.TotalOfferValue.ToString("C")</td>
+                    <td>
+                        @if (_checkoutBidId == bid.Id)
+                        {
+                            <div class="input-group input-group-sm">
+                                <input class="form-control" placeholder="Promo code (optional)" @bind="_promoCode" />
+                                <button class="btn btn-success" @onclick="() => Checkout(bid)">Confirm payment</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-success" @onclick="() => _checkoutBidId = bid.Id">Checkout</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="alert alert-danger">@_error</div>
+}
+
+<h3 class="mb-3">My purchases</h3>
+@if (_buyerOrders.Count == 0)
+{
+    <p class="text-muted">No orders yet.</p>
+}
+else
+{
+    <table class="table align-middle mb-5">
+        <thead><tr><th>Product</th><th>Total</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var order in _buyerOrders)
+            {
+                <tr>
+                    <td>@(order.Product?.Name ?? order.ProductId)</td>
+                    <td>@order.TotalAmount.ToString("C")</td>
+                    <td><span class="badge bg-secondary">@order.Status</span></td>
+                    <td><a class="btn btn-sm btn-outline-primary" href="@($"/orders/{order.Id}")">View</a></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<h3 class="mb-3">My sales</h3>
+@if (_sellerOrders.Count == 0)
+{
+    <p class="text-muted">No sales yet.</p>
+}
+else
+{
+    <table class="table align-middle">
+        <thead><tr><th>Product</th><th>Buyer</th><th>Total</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var order in _sellerOrders)
+            {
+                <tr>
+                    <td>@(order.Product?.Name ?? order.ProductId)</td>
+                    <td>@(order.BuyerPharmacy?.Name ?? order.BuyerPharmacyId)</td>
+                    <td>@order.TotalAmount.ToString("C")</td>
+                    <td><span class="badge bg-secondary">@order.Status</span></td>
+                    <td><a class="btn btn-sm btn-outline-primary" href="@($"/orders/{order.Id}")">View</a></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<Bid> _approvedBids = new();
+    private List<Order> _buyerOrders = new();
+    private List<Order> _sellerOrders = new();
+    private string? _checkoutBidId;
+    private string _promoCode = string.Empty;
+    private string? _error;
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    private ApplicationUser? _user;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState!;
+        _user = await UserManager.GetUserAsync(authState.User);
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        if (_user?.PharmacyId is null)
+        {
+            return;
+        }
+
+        _approvedBids = await Db.Bids
+            .Include(b => b.Product)
+            .Where(b => b.BuyerPharmacyId == _user.PharmacyId && b.Status == BidStatus.Approved)
+            .Where(b => !Db.Orders.Any(o => o.BidId == b.Id))
+            .ToListAsync();
+
+        _buyerOrders = await Db.Orders
+            .Include(o => o.Product)
+            .Where(o => o.BuyerPharmacyId == _user.PharmacyId)
+            .OrderByDescending(o => o.CreatedAt)
+            .ToListAsync();
+
+        _sellerOrders = await Db.Orders
+            .Include(o => o.Product)
+            .Include(o => o.BuyerPharmacy)
+            .Where(o => o.SellerPharmacyId == _user.PharmacyId)
+            .OrderByDescending(o => o.CreatedAt)
+            .ToListAsync();
+    }
+
+    // Mirrors OrdersController.Checkout — see the README on the known
+    // duplication between the portal and the REST API for now.
+    private async Task Checkout(Bid bid)
+    {
+        _error = null;
+
+        var freshBid = await Db.Bids.Include(b => b.Product).FirstAsync(b => b.Id == bid.Id);
+        if (freshBid.Status != BidStatus.Approved)
+        {
+            _error = "Only approved bids can be paid for.";
+            return;
+        }
+
+        if (await Db.Orders.AnyAsync(o => o.BidId == freshBid.Id))
+        {
+            _error = "This bid has already been paid for.";
+            return;
+        }
+
+        PromoCode? promoCode = null;
+        if (!string.IsNullOrWhiteSpace(_promoCode))
+        {
+            var normalized = _promoCode.Trim().ToUpperInvariant();
+            promoCode = await Db.PromoCodes.FirstOrDefaultAsync(p => p.Code == normalized);
+            if (promoCode is null || !promoCode.IsValidNow)
+            {
+                _error = "That promo code is invalid, expired, or fully redeemed.";
+                return;
+            }
+        }
+
+        var platformFeeRate = Configuration.GetValue("Marketplace:PlatformFeeRate", 0.0);
+        var subtotal = freshBid.TotalOfferValue;
+        var discountAmount = promoCode is null ? 0 : subtotal * (promoCode.DiscountPercent / 100.0);
+        var discountedSubtotal = subtotal - discountAmount;
+        var platformFeeAmount = discountedSubtotal * platformFeeRate;
+        var totalAmount = discountedSubtotal + platformFeeAmount;
+
+        var chargeResult = await PaymentGateway.ChargeAsync(new PaymentChargeRequest(
+            _user!.PharmacyId!, totalAmount, "USD", $"MedLoop order for bid {freshBid.Id}"));
+
+        if (!chargeResult.Succeeded)
+        {
+            _error = chargeResult.FailureReason ?? "Payment failed.";
+            return;
+        }
+
+        await using var transaction = await Db.Database.BeginTransactionAsync();
+        try
+        {
+            var product = await Db.Products.FirstAsync(p => p.Id == freshBid.ProductId);
+
+            if (product.LockQuantity < freshBid.OfferQuantity || product.Quantity < freshBid.OfferQuantity)
+            {
+                await transaction.RollbackAsync();
+                _error = "Product stock changed since this bid was approved. Contact the seller.";
+                return;
+            }
+
+            product.Quantity -= freshBid.OfferQuantity;
+            product.LockQuantity -= freshBid.OfferQuantity;
+
+            if (promoCode is not null)
+            {
+                var freshPromo = await Db.PromoCodes.FirstAsync(p => p.Id == promoCode.Id);
+                if (!freshPromo.IsValidNow)
+                {
+                    await transaction.RollbackAsync();
+                    _error = "This promo code reached its redemption limit while checkout was processing.";
+                    return;
+                }
+                freshPromo.TimesRedeemed += 1;
+            }
+
+            var order = new Order
+            {
+                BidId = freshBid.Id,
+                ProductId = product.Id,
+                SellerPharmacyId = product.PharmacyId,
+                BuyerPharmacyId = freshBid.BuyerPharmacyId,
+                Quantity = freshBid.OfferQuantity,
+                UnitPrice = freshBid.OfferPricePerUnit,
+                PromoCodeId = promoCode?.Id,
+                DiscountAmount = discountAmount,
+                PlatformFeeRate = platformFeeRate,
+                PlatformFeeAmount = platformFeeAmount,
+                TotalAmount = totalAmount,
+                Status = OrderStatus.Paid,
+                PaymentReference = chargeResult.Reference
+            };
+
+            Db.Orders.Add(order);
+            freshBid.Status = BidStatus.PaymentCompleted;
+
+            await Db.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            await Notifications.NotifyPharmacyAsync(order.SellerPharmacyId, "Order paid",
+                $"An order for {product.Name} ({order.Quantity} units, {order.TotalAmount:C}) has been paid. Please prepare it for fulfillment.");
+        }
+        catch (DbUpdateException)
+        {
+            await transaction.RollbackAsync();
+            _error = "This order could not be completed due to a concurrent update — please retry.";
+            return;
+        }
+
+        _checkoutBidId = null;
+        _promoCode = string.Empty;
+        await Reload();
+    }
+}
