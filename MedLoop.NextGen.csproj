@@ -8,6 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Pinned to 1.74.0: Google.Apis.Gmail.v1 below transitively needs
+         Auth >= 1.74.0. Pinning both explicitly to matching versions here
+         avoids the NU1605 package-downgrade error hit when building
+         PharmacyWebapp's equivalent Gmail API integration. -->
+    <PackageReference Include="Google.Apis.Auth" Version="1.74.0" />
+    <PackageReference Include="Google.Apis.Gmail.v1" Version="1.74.0.4162" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="8.0.10" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.10">
       <PrivateAssets>all</PrivateAssets>

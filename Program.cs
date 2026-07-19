@@ -18,6 +18,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // single line here once one is wired up — no controller code needs to
 // change, since OrdersController depends only on IPaymentGateway.
 builder.Services.AddScoped<IPaymentGateway, MockPaymentGateway>();
+builder.Services.AddScoped<IEmailSender, GmailEmailSender>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IInvoiceService, QuestPdfInvoiceService>();
 
@@ -29,6 +30,13 @@ builder.Services
     })
     .AddRoles<IdentityRole>()
     .AddEntityFrameworkStores<AppDbContext>();
+
+// Registered AFTER AddIdentityApiEndpoints on purpose: that call internally
+// registers a no-op IEmailSender<ApplicationUser> via TryAdd, and this
+// explicit registration needs to be the one that wins so account
+// confirmation / password reset emails actually get sent through Gmail
+// instead of silently going nowhere.
+builder.Services.AddScoped<IEmailSender<ApplicationUser>, IdentityEmailSenderAdapter>();
 
 builder.Services.AddAuthorization();
 builder.Services.AddControllers();
