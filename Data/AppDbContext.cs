@@ -22,6 +22,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<PosSale> PosSales => Set<PosSale>();
     public DbSet<PosSaleItem> PosSaleItems => Set<PosSaleItem>();
+    public DbSet<PromoCode> PromoCodes => Set<PromoCode>();
+    public DbSet<OrderFeedback> OrderFeedbacks => Set<OrderFeedback>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -164,6 +166,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .HasForeignKey(o => o.BuyerPharmacyId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            entity.HasOne(o => o.PromoCode)
+                .WithMany()
+                .HasForeignKey(o => o.PromoCodeId)
+                .OnDelete(DeleteBehavior.Restrict);
+
             // One order per bid, enforced at the database level — not just
             // an application-level check — so a retried/duplicated
             // checkout request can never create two paid orders for the
@@ -234,6 +241,32 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasIndex(i => i.PosSaleId);
+        });
+
+        builder.Entity<PromoCode>(entity =>
+        {
+            entity.HasIndex(p => p.Code).IsUnique();
+
+            // Same reasoning as Product: two checkouts racing to redeem the
+            // last remaining use of a promo code (MaxRedemptions) must not
+            // both succeed. Optimistic concurrency via xmin makes the
+            // second one retry instead of silently over-redeeming past the
+            // configured cap.
+            entity.UseXminAsConcurrencyToken();
+        });
+
+        builder.Entity<OrderFeedback>(entity =>
+        {
+            entity.Property(f => f.SubmittedBy).HasConversion<string>().HasMaxLength(16);
+
+            entity.HasOne(f => f.Order)
+                .WithMany()
+                .HasForeignKey(f => f.OrderId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // One feedback submission per order per side — enforced here,
+            // not just checked in application code.
+            entity.HasIndex(f => new { f.OrderId, f.SubmittedBy }).IsUnique();
         });
     }
 }

@@ -41,6 +41,11 @@ public class Order
 
     public int Quantity { get; set; }
     public double UnitPrice { get; set; }
+
+    public string? PromoCodeId { get; set; }
+    public PromoCode? PromoCode { get; set; }
+    public double DiscountAmount { get; set; }
+
     public double PlatformFeeRate { get; set; }
     public double PlatformFeeAmount { get; set; }
     public double TotalAmount { get; set; }

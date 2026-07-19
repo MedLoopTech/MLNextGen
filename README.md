@@ -78,8 +78,18 @@ A separate subsystem from the B2B marketplace — the legacy app kept these in a
 - POS sales decrement the same `Product.Quantity`/`AvailableQuantity` pool that B2B bids lock against, wrapped in a transaction with the same `xmin`-concurrency handling as checkout — selling a product at the counter and locking it for a B2B bid can't both succeed for stock that isn't actually there.
 - `Customer.LoyaltyPoints` exists as a field but nothing awards points yet — that's a rewards/promotions concern, left for the long-tail modules below rather than guessed at here.
 
+### Promo codes
+- `PromoCode` (admin-managed via `PromoCodesController`, `[Authorize(Roles = "Admin")]`): a percentage discount, optional expiry, optional max-redemption cap.
+- Applied at `POST /api/orders/checkout` via an optional `promoCode` string field — the *only* thing the client sends about it. The discount percentage, validity, and redemption count are all read from the stored `PromoCode` row server-side; the discount is applied to the subtotal before the platform fee is calculated, and the resulting `DiscountAmount` is recorded on the `Order` (and shown on its invoice).
+- Redemption counting has the same race-condition protection as stock locking: `PromoCode` also uses `UseXminAsConcurrencyToken()`, and the redemption count is re-checked and incremented inside the same DB transaction as the rest of checkout — two checkouts racing to use the last remaining redemption of a capped code can't both succeed.
+
+### Order feedback
+- `OrderFeedback` — one rating (1-5) + optional comment per `(Order, party)`, enforced both in application code and with a unique database index, so a duplicate or racing submission can't slip through either path.
+- `POST /api/orders/{id}/feedback` / `GET /api/orders/{id}/feedback` — only valid once an order is `Fulfilled`; either party can leave feedback, and the other party gets notified when they do.
+- Replaces the legacy app's implied-but-never-built feedback concept with something structured, rather than free-floating comment fields with no real state behind them (the same pattern already fixed for disputes).
+
 ## What's deliberately NOT here yet
-Real-time push (these are polled/in-app notifications plus email, not sockets/webhooks), and the long-tail collections (feedback, rewards, promo codes, appointments, disposer/technician/distributor workflows). Those get added incrementally per the phased migration plan. A **real** payment gateway integration (replacing `MockPaymentGateway`, and adding an actual refund path) is also still pending — see the gaps noted above before that swap happens.
+Real-time push (these are polled/in-app notifications plus email, not sockets/webhooks), loyalty point redemption (the `Customer.LoyaltyPoints` field exists but nothing awards or spends it yet), and the remaining long-tail collections (rewards/achievements, appointments, disposer/technician/distributor workflows). Those get added incrementally per the phased migration plan. A **real** payment gateway integration (replacing `MockPaymentGateway`, and adding an actual refund path) is also still pending — see the gaps noted above before that swap happens.
 
 ## Running locally
 ```bash

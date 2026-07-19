@@ -117,12 +117,14 @@ public class OrdersController : ControllerBase
         return File(pdfBytes, "application/pdf", $"invoice-{order.Id}.pdf");
     }
 
-    public record CheckoutRequest(string BidId);
+    public record CheckoutRequest(string BidId, string? PromoCode);
 
     // Charges the buyer for an approved bid and creates the resulting
     // order, atomically. The amount charged is ALWAYS recomputed here from
     // the bid's own stored quantity/price plus the server-configured
-    // platform fee rate — the request body only ever carries a bid ID.
+    // platform fee rate (and, if supplied, a server-validated promo code
+    // discount) — the request body only ever carries a bid ID and
+    // optionally a promo code string, never a computed amount.
     //
     // This is the direct fix for the legacy app's most severe payment bug:
     // PaymentController.ProcessCheckout took `amount` as a plain query
@@ -167,10 +169,24 @@ public class OrdersController : ControllerBase
             return Conflict("This bid has already been paid for.");
         }
 
+        PromoCode? promoCode = null;
+        if (!string.IsNullOrWhiteSpace(request.PromoCode))
+        {
+            var normalizedCode = request.PromoCode.Trim().ToUpperInvariant();
+            promoCode = await _db.PromoCodes.FirstOrDefaultAsync(p => p.Code == normalizedCode);
+
+            if (promoCode is null || !promoCode.IsValidNow)
+            {
+                return BadRequest("This promo code is invalid, expired, or has already reached its redemption limit.");
+            }
+        }
+
         var platformFeeRate = _configuration.GetValue("Marketplace:PlatformFeeRate", 0.0);
         var subtotal = bid.TotalOfferValue;
-        var platformFeeAmount = subtotal * platformFeeRate;
-        var totalAmount = subtotal + platformFeeAmount;
+        var discountAmount = promoCode is null ? 0 : subtotal * (promoCode.DiscountPercent / 100.0);
+        var discountedSubtotal = subtotal - discountAmount;
+        var platformFeeAmount = discountedSubtotal * platformFeeRate;
+        var totalAmount = discountedSubtotal + platformFeeAmount;
 
         var chargeResult = await _paymentGateway.ChargeAsync(new PaymentChargeRequest(
             user.PharmacyId,
@@ -204,6 +220,24 @@ public class OrdersController : ControllerBase
             product.Quantity -= bid.OfferQuantity;
             product.LockQuantity -= bid.OfferQuantity;
 
+            if (promoCode is not null)
+            {
+                // Re-fetch for a fresh xmin token too — two checkouts
+                // racing to redeem the last use of the same code must not
+                // both succeed.
+                var freshPromoCode = await _db.PromoCodes.FirstAsync(p => p.Id == promoCode.Id);
+                if (!freshPromoCode.IsValidNow)
+                {
+                    await transaction.RollbackAsync();
+                    // Same caveat as the stock-changed case above: the
+                    // charge already succeeded and would need voiding
+                    // against a real gateway.
+                    return Conflict("This promo code reached its redemption limit while checkout was processing.");
+                }
+
+                freshPromoCode.TimesRedeemed += 1;
+            }
+
             var order = new Order
             {
                 BidId = bid.Id,
@@ -212,6 +246,8 @@ public class OrdersController : ControllerBase
                 BuyerPharmacyId = bid.BuyerPharmacyId,
                 Quantity = bid.OfferQuantity,
                 UnitPrice = bid.OfferPricePerUnit,
+                PromoCodeId = promoCode?.Id,
+                DiscountAmount = discountAmount,
                 PlatformFeeRate = platformFeeRate,
                 PlatformFeeAmount = platformFeeAmount,
                 TotalAmount = totalAmount,
@@ -383,5 +419,108 @@ public class OrdersController : ControllerBase
         await _notifications.NotifyPharmacyAsync(order.SellerPharmacyId, "Dispute resolved", resolutionSummary);
 
         return NoContent();
+    }
+
+    [HttpGet("{id}/feedback")]
+    public async Task<ActionResult<List<OrderFeedback>>> GetFeedback(string id)
+    {
+        var user = await _userManager.GetUserAsync(User);
+        var order = await _db.Orders.FindAsync(id);
+
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        var isAdmin = User.IsInRole("Admin");
+        var isParty = user?.PharmacyId == order.BuyerPharmacyId || user?.PharmacyId == order.SellerPharmacyId;
+        if (!isAdmin && !isParty)
+        {
+            return Forbid();
+        }
+
+        var feedback = await _db.OrderFeedbacks
+            .AsNoTracking()
+            .Where(f => f.OrderId == id)
+            .OrderBy(f => f.CreatedAt)
+            .ToListAsync();
+
+        return Ok(feedback);
+    }
+
+    public record SubmitFeedbackRequest(int Rating, string? Comment);
+
+    // Either party can leave one piece of feedback per order, once it's
+    // Fulfilled — enforced both here (Status check) and at the database
+    // level (unique index on (OrderId, SubmittedBy) in AppDbContext), so a
+    // duplicate/racing submission can't slip through either path.
+    [HttpPost("{id}/feedback")]
+    public async Task<ActionResult<OrderFeedback>> SubmitFeedback(string id, [FromBody] SubmitFeedbackRequest request)
+    {
+        if (request.Rating is < 1 or > 5)
+        {
+            return BadRequest("Rating must be between 1 and 5.");
+        }
+
+        var user = await _userManager.GetUserAsync(User);
+        var order = await _db.Orders.FindAsync(id);
+
+        if (order is null)
+        {
+            return NotFound();
+        }
+
+        OrderParty party;
+        if (user?.PharmacyId == order.BuyerPharmacyId)
+        {
+            party = OrderParty.Buyer;
+        }
+        else if (user?.PharmacyId == order.SellerPharmacyId)
+        {
+            party = OrderParty.Seller;
+        }
+        else
+        {
+            return Forbid();
+        }
+
+        if (order.Status != OrderStatus.Fulfilled)
+        {
+            return BadRequest("Feedback can only be left on a fulfilled order.");
+        }
+
+        if (await _db.OrderFeedbacks.AnyAsync(f => f.OrderId == id && f.SubmittedBy == party))
+        {
+            return Conflict("You have already submitted feedback for this order.");
+        }
+
+        var feedback = new OrderFeedback
+        {
+            OrderId = id,
+            SubmittedBy = party,
+            SubmittedByPharmacyId = user!.PharmacyId!,
+            Rating = request.Rating,
+            Comment = request.Comment
+        };
+
+        _db.OrderFeedbacks.Add(feedback);
+
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            // The unique index caught a race the app-level check above missed.
+            return Conflict("You have already submitted feedback for this order.");
+        }
+
+        var notifyPharmacyId = party == OrderParty.Buyer ? order.SellerPharmacyId : order.BuyerPharmacyId;
+        await _notifications.NotifyPharmacyAsync(
+            notifyPharmacyId,
+            "New feedback received",
+            $"You received {request.Rating}/5 feedback on an order.");
+
+        return CreatedAtAction(nameof(GetFeedback), new { id }, feedback);
     }
 }

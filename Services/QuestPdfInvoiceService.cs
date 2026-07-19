@@ -86,6 +86,11 @@ public class QuestPdfInvoiceService : IInvoiceService
 
                     column.Item().AlignRight().Column(c =>
                     {
+                        if (order.DiscountAmount > 0)
+                        {
+                            c.Item().Text($"Promo discount: -{order.DiscountAmount:C}");
+                        }
+
                         c.Item().Text($"Platform fee ({order.PlatformFeeRate:P1}): {order.PlatformFeeAmount:C}");
                         c.Item().Text($"Total: {order.TotalAmount:C}").Bold().FontSize(14);
                     });
