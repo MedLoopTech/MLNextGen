@@ -19,6 +19,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<BidNegotiationRound> BidNegotiationRounds => Set<BidNegotiationRound>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<Customer> Customers => Set<Customer>();
+    public DbSet<PosSale> PosSales => Set<PosSale>();
+    public DbSet<PosSaleItem> PosSaleItems => Set<PosSaleItem>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -178,6 +181,59 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasIndex(n => new { n.RecipientUserId, n.IsRead });
+        });
+
+        builder.Entity<Customer>(entity =>
+        {
+            entity.HasOne(c => c.Pharmacy)
+                .WithMany()
+                .HasForeignKey(c => c.PharmacyId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(c => c.PharmacyId);
+        });
+
+        builder.Entity<PosSale>(entity =>
+        {
+            entity.Property(s => s.PaymentMethod).HasConversion<string>().HasMaxLength(16);
+
+            entity.HasOne(s => s.Pharmacy)
+                .WithMany()
+                .HasForeignKey(s => s.PharmacyId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(s => s.Branch)
+                .WithMany()
+                .HasForeignKey(s => s.BranchId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(s => s.CashierUser)
+                .WithMany()
+                .HasForeignKey(s => s.CashierUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(s => s.Customer)
+                .WithMany()
+                .HasForeignKey(s => s.CustomerId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasIndex(s => s.PharmacyId);
+            entity.HasIndex(s => s.CreatedAt);
+        });
+
+        builder.Entity<PosSaleItem>(entity =>
+        {
+            entity.HasOne(i => i.PosSale)
+                .WithMany(s => s.Items)
+                .HasForeignKey(i => i.PosSaleId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(i => i.Product)
+                .WithMany()
+                .HasForeignKey(i => i.ProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(i => i.PosSaleId);
         });
     }
 }
