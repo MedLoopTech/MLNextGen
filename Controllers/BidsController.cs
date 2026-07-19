@@ -1,5 +1,6 @@
 using MedLoop.NextGen.Data;
 using MedLoop.NextGen.Models;
+using MedLoop.NextGen.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -14,11 +15,13 @@ public class BidsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly UserManager<ApplicationUser> _userManager;
+    private readonly INotificationService _notifications;
 
-    public BidsController(AppDbContext db, UserManager<ApplicationUser> userManager)
+    public BidsController(AppDbContext db, UserManager<ApplicationUser> userManager, INotificationService notifications)
     {
         _db = db;
         _userManager = userManager;
+        _notifications = notifications;
     }
 
     // The buyer's own bid history. This works correctly here because
@@ -193,6 +196,11 @@ public class BidsController : ControllerBase
 
         await _db.SaveChangesAsync();
 
+        await _notifications.NotifyPharmacyAsync(
+            product.PharmacyId,
+            "New bid received",
+            $"A bid was placed on {product.Name}: {bid.OfferQuantity} units at {bid.OfferPricePerUnit:C} each.");
+
         return CreatedAtAction(nameof(GetById), new { id = bid.Id }, bid);
     }
 
@@ -226,7 +234,7 @@ public class BidsController : ControllerBase
             return NotFound();
         }
 
-        var (user, _, _, isTheirTurn) = await ResolvePartyAsync(bid);
+        var (user, isBuyer, _, isTheirTurn) = await ResolvePartyAsync(bid);
         var isAdmin = User.IsInRole("Admin");
 
         if (bid.Status is not (BidStatus.Pending or BidStatus.CounteredBySeller or BidStatus.CounteredByBuyer))
@@ -262,6 +270,12 @@ public class BidsController : ControllerBase
             return Conflict("Stock changed concurrently — please refresh and try again.");
         }
 
+        var notifyPharmacyId = isBuyer ? bid.Product.PharmacyId : bid.BuyerPharmacyId;
+        await _notifications.NotifyPharmacyAsync(
+            notifyPharmacyId,
+            "Bid accepted",
+            $"Your bid on {bid.Product.Name} was accepted. Proceed to checkout to complete the order.");
+
         return NoContent();
     }
 
@@ -281,7 +295,7 @@ public class BidsController : ControllerBase
             return NotFound();
         }
 
-        var (_, _, _, isTheirTurn) = await ResolvePartyAsync(bid);
+        var (_, isBuyer, _, isTheirTurn) = await ResolvePartyAsync(bid);
         var isAdmin = User.IsInRole("Admin");
 
         if (bid.Status is not (BidStatus.Pending or BidStatus.CounteredBySeller or BidStatus.CounteredByBuyer))
@@ -298,6 +312,12 @@ public class BidsController : ControllerBase
         bid.RejectionReason = request.Reason;
         bid.DecidedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+
+        var notifyPharmacyId = isBuyer ? bid.Product.PharmacyId : bid.BuyerPharmacyId;
+        await _notifications.NotifyPharmacyAsync(
+            notifyPharmacyId,
+            "Bid rejected",
+            $"Your bid on {bid.Product.Name} was rejected: {request.Reason}");
 
         return NoContent();
     }
@@ -366,6 +386,12 @@ public class BidsController : ControllerBase
 
         await _db.SaveChangesAsync();
 
+        var notifyPharmacyId = isBuyer ? bid.Product.PharmacyId : bid.BuyerPharmacyId;
+        await _notifications.NotifyPharmacyAsync(
+            notifyPharmacyId,
+            "Counter-offer received",
+            $"A counter-offer was made on {bid.Product.Name}: {request.Quantity} units at {request.PricePerUnit:C} each.");
+
         return Ok(bid);
     }
 
@@ -375,9 +401,9 @@ public class BidsController : ControllerBase
     public async Task<IActionResult> Cancel(string id)
     {
         var user = await _userManager.GetUserAsync(User);
-        var bid = await _db.Bids.FindAsync(id);
+        var bid = await _db.Bids.Include(b => b.Product).FirstOrDefaultAsync(b => b.Id == id);
 
-        if (bid is null)
+        if (bid?.Product is null)
         {
             return NotFound();
         }
@@ -395,6 +421,11 @@ public class BidsController : ControllerBase
         bid.Status = BidStatus.Cancelled;
         bid.DecidedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+
+        await _notifications.NotifyPharmacyAsync(
+            bid.Product.PharmacyId,
+            "Bid withdrawn",
+            $"The buyer withdrew their bid/negotiation on {bid.Product.Name}.");
 
         return NoContent();
     }

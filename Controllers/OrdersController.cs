@@ -17,17 +17,20 @@ public class OrdersController : ControllerBase
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IPaymentGateway _paymentGateway;
     private readonly IConfiguration _configuration;
+    private readonly INotificationService _notifications;
 
     public OrdersController(
         AppDbContext db,
         UserManager<ApplicationUser> userManager,
         IPaymentGateway paymentGateway,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        INotificationService notifications)
     {
         _db = db;
         _userManager = userManager;
         _paymentGateway = paymentGateway;
         _configuration = configuration;
+        _notifications = notifications;
     }
 
     [HttpGet("mine")]
@@ -193,6 +196,11 @@ public class OrdersController : ControllerBase
             await _db.SaveChangesAsync();
             await transaction.CommitAsync();
 
+            await _notifications.NotifyPharmacyAsync(
+                order.SellerPharmacyId,
+                "Order paid",
+                $"An order for {product.Name} ({order.Quantity} units, {order.TotalAmount:C}) has been paid. Please prepare it for fulfillment.");
+
             return CreatedAtAction(nameof(GetById), new { id = order.Id }, order);
         }
         catch (DbUpdateException)
@@ -233,6 +241,11 @@ public class OrdersController : ControllerBase
         order.Status = OrderStatus.Fulfilled;
         order.FulfilledAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+
+        await _notifications.NotifyPharmacyAsync(
+            order.BuyerPharmacyId,
+            "Order fulfilled",
+            "Your order has been marked as shipped/fulfilled by the seller.");
 
         return NoContent();
     }
@@ -285,6 +298,12 @@ public class OrdersController : ControllerBase
         order.DisputeRaisedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
+        var notifyPharmacyId = party == OrderParty.Buyer ? order.SellerPharmacyId : order.BuyerPharmacyId;
+        await _notifications.NotifyPharmacyAsync(
+            notifyPharmacyId,
+            "Order disputed",
+            $"A dispute was raised on your order: {request.Reason}");
+
         return NoContent();
     }
 
@@ -329,6 +348,10 @@ public class OrdersController : ControllerBase
         // refunded — the same category of bug as the legacy app's payment
         // stub, just moved to a different endpoint.
         await _db.SaveChangesAsync();
+
+        var resolutionSummary = $"Dispute resolved: {request.Resolution} — {request.Notes}";
+        await _notifications.NotifyPharmacyAsync(order.BuyerPharmacyId, "Dispute resolved", resolutionSummary);
+        await _notifications.NotifyPharmacyAsync(order.SellerPharmacyId, "Dispute resolved", resolutionSummary);
 
         return NoContent();
     }

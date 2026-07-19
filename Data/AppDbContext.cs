@@ -18,6 +18,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Bid> Bids => Set<Bid>();
     public DbSet<BidNegotiationRound> BidNegotiationRounds => Set<BidNegotiationRound>();
     public DbSet<Order> Orders => Set<Order>();
+    public DbSet<Notification> Notifications => Set<Notification>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -167,6 +168,16 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(o => o.BidId).IsUnique();
             entity.HasIndex(o => o.BuyerPharmacyId);
             entity.HasIndex(o => o.SellerPharmacyId);
+        });
+
+        builder.Entity<Notification>(entity =>
+        {
+            entity.HasOne(n => n.RecipientUser)
+                .WithMany()
+                .HasForeignKey(n => n.RecipientUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(n => new { n.RecipientUserId, n.IsRead });
         });
     }
 }

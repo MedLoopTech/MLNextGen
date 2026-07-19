@@ -12,6 +12,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // single line here once one is wired up — no controller code needs to
 // change, since OrdersController depends only on IPaymentGateway.
 builder.Services.AddScoped<IPaymentGateway, MockPaymentGateway>();
+builder.Services.AddScoped<INotificationService, NotificationService>();
 
 builder.Services
     .AddIdentityApiEndpoints<ApplicationUser>(options =>
