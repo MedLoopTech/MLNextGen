@@ -68,6 +68,41 @@ public class BidsController : ControllerBase
         return Ok(bids);
     }
 
+    [HttpGet("{id}")]
+    public async Task<ActionResult<Bid>> GetById(string id)
+    {
+        var bid = await _db.Bids.FindAsync(id);
+        return bid is null ? NotFound() : Ok(bid);
+    }
+
+    // Full negotiation audit trail for a bid — every offer and counter-offer
+    // in order. Either party to the bid (or an admin) can view it.
+    [HttpGet("{id}/history")]
+    public async Task<ActionResult<List<BidNegotiationRound>>> GetHistory(string id)
+    {
+        var user = await _userManager.GetUserAsync(User);
+        var bid = await _db.Bids.Include(b => b.Product).FirstOrDefaultAsync(b => b.Id == id);
+        if (bid?.Product is null)
+        {
+            return NotFound();
+        }
+
+        var isAdmin = User.IsInRole("Admin");
+        var isParty = user?.PharmacyId == bid.BuyerPharmacyId || user?.PharmacyId == bid.Product.PharmacyId;
+        if (!isAdmin && !isParty)
+        {
+            return Forbid();
+        }
+
+        var history = await _db.BidNegotiationRounds
+            .AsNoTracking()
+            .Where(r => r.BidId == id)
+            .OrderBy(r => r.CreatedAt)
+            .ToListAsync();
+
+        return Ok(history);
+    }
+
     public record CreateBidRequest(string ProductId, int OfferQuantity, double OfferPricePerUnit, string? Message);
 
     [HttpPost]
@@ -118,19 +153,19 @@ public class BidsController : ControllerBase
             return BadRequest($"Only {product.AvailableQuantity} units are available.");
         }
 
-        // Scoped to THIS buyer's own pending bid on THIS product — the
-        // legacy check (getOfferNegotiationsByProductId().Any(status ==
-        // Pending)) looked at pending bids from every buyer on the
-        // product, so the first pending bid from anyone blocked every
-        // other pharmacy from bidding on the same listing at all.
-        var alreadyPending = await _db.Bids.AnyAsync(b =>
+        // Scoped to THIS buyer's own open bid on THIS product — the legacy
+        // check (getOfferNegotiationsByProductId().Any(status == Pending))
+        // looked at pending bids from every buyer on the product, so the
+        // first pending bid from anyone blocked every other pharmacy from
+        // bidding on the same listing at all.
+        var hasOpenBid = await _db.Bids.AnyAsync(b =>
             b.ProductId == request.ProductId &&
             b.BuyerPharmacyId == user.PharmacyId &&
-            b.Status == BidStatus.Pending);
+            (b.Status == BidStatus.Pending || b.Status == BidStatus.CounteredBySeller || b.Status == BidStatus.CounteredByBuyer));
 
-        if (alreadyPending)
+        if (hasOpenBid)
         {
-            return BadRequest("You already have a pending bid on this product.");
+            return BadRequest("You already have an open bid or negotiation on this product.");
         }
 
         var bid = new Bid
@@ -140,52 +175,73 @@ public class BidsController : ControllerBase
             BuyerUserId = user.Id,
             OfferQuantity = request.OfferQuantity,
             OfferPricePerUnit = request.OfferPricePerUnit,
-            Message = request.Message
+            Message = request.Message,
+            LastProposedBy = NegotiationParty.Buyer
         };
 
         _db.Bids.Add(bid);
+
+        _db.BidNegotiationRounds.Add(new BidNegotiationRound
+        {
+            BidId = bid.Id,
+            ProposedBy = NegotiationParty.Buyer,
+            ProposedByUserId = user.Id,
+            Quantity = bid.OfferQuantity,
+            PricePerUnit = bid.OfferPricePerUnit,
+            Message = bid.Message
+        });
+
         await _db.SaveChangesAsync();
 
         return CreatedAtAction(nameof(GetById), new { id = bid.Id }, bid);
     }
 
-    [HttpGet("{id}")]
-    public async Task<ActionResult<Bid>> GetById(string id)
-    {
-        var bid = await _db.Bids.FindAsync(id);
-        return bid is null ? NotFound() : Ok(bid);
-    }
-
-    [HttpPut("{id}/approve")]
-    public async Task<IActionResult> Approve(string id)
+    // Resolves who the caller is relative to a bid, and whether it's
+    // currently their turn to respond (accept / reject / counter).
+    private async Task<(ApplicationUser? user, bool isBuyer, bool isSeller, bool isTheirTurn)> ResolvePartyAsync(Bid bid)
     {
         var user = await _userManager.GetUserAsync(User);
-        if (user is null)
+        if (user?.PharmacyId is null || bid.Product is null)
         {
-            return Forbid();
+            return (user, false, false, false);
         }
 
+        var isBuyer = user.PharmacyId == bid.BuyerPharmacyId;
+        var isSeller = user.PharmacyId == bid.Product.PharmacyId;
+
+        var sellersTurn = bid.Status is BidStatus.Pending or BidStatus.CounteredByBuyer;
+        var buyersTurn = bid.Status is BidStatus.CounteredBySeller;
+
+        var isTheirTurn = (isSeller && sellersTurn) || (isBuyer && buyersTurn);
+
+        return (user, isBuyer, isSeller, isTheirTurn);
+    }
+
+    [HttpPut("{id}/accept")]
+    public async Task<IActionResult> Accept(string id)
+    {
         var bid = await _db.Bids.Include(b => b.Product).FirstOrDefaultAsync(b => b.Id == id);
         if (bid?.Product is null)
         {
             return NotFound();
         }
 
-        // Ownership check — the legacy BidApprovalController.approvenrejectRequest
-        // never verified the caller's pharmacy matched the product's
-        // seller pharmacy, so anyone (including the buyer themselves)
-        // could approve or reject any bid.
+        var (user, _, _, isTheirTurn) = await ResolvePartyAsync(bid);
         var isAdmin = User.IsInRole("Admin");
-        if (!isAdmin && bid.Product.PharmacyId != user.PharmacyId)
+
+        if (bid.Status is not (BidStatus.Pending or BidStatus.CounteredBySeller or BidStatus.CounteredByBuyer))
+        {
+            return BadRequest("This bid is not open for a response.");
+        }
+
+        if (!isAdmin && !isTheirTurn)
         {
             return Forbid();
         }
 
-        if (bid.Status != BidStatus.Pending)
-        {
-            return BadRequest("Only pending bids can be approved.");
-        }
-
+        // Whoever accepts is agreeing to the CURRENT terms (bid.OfferQuantity/
+        // OfferPricePerUnit) — the same values shown to them, never anything
+        // supplied in this request, since accepting takes no body at all.
         if (bid.OfferQuantity > bid.Product.AvailableQuantity)
         {
             return BadRequest($"Insufficient stock. Available: {bid.Product.AvailableQuantity}, requested: {bid.OfferQuantity}.");
@@ -202,9 +258,7 @@ public class BidsController : ControllerBase
         catch (DbUpdateConcurrencyException)
         {
             // Another approval (or listing update) landed first and moved
-            // the stock out from under this one — the legacy code had no
-            // guard against this at all. Ask the caller to re-check and
-            // retry rather than silently over-locking stock.
+            // the stock out from under this one.
             return Conflict("Stock changed concurrently — please refresh and try again.");
         }
 
@@ -221,10 +275,46 @@ public class BidsController : ControllerBase
             return BadRequest("A rejection reason is required.");
         }
 
-        var user = await _userManager.GetUserAsync(User);
-        if (user is null)
+        var bid = await _db.Bids.Include(b => b.Product).FirstOrDefaultAsync(b => b.Id == id);
+        if (bid?.Product is null)
+        {
+            return NotFound();
+        }
+
+        var (_, _, _, isTheirTurn) = await ResolvePartyAsync(bid);
+        var isAdmin = User.IsInRole("Admin");
+
+        if (bid.Status is not (BidStatus.Pending or BidStatus.CounteredBySeller or BidStatus.CounteredByBuyer))
+        {
+            return BadRequest("This bid is not open for a response.");
+        }
+
+        if (!isAdmin && !isTheirTurn)
         {
             return Forbid();
+        }
+
+        bid.Status = BidStatus.Rejected;
+        bid.RejectionReason = request.Reason;
+        bid.DecidedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    public record CounterBidRequest(int Quantity, double PricePerUnit, string? Message);
+
+    [HttpPut("{id}/counter")]
+    public async Task<ActionResult<Bid>> Counter(string id, [FromBody] CounterBidRequest request)
+    {
+        if (request.Quantity <= 0)
+        {
+            return BadRequest("quantity must be greater than zero.");
+        }
+
+        if (request.PricePerUnit <= 0)
+        {
+            return BadRequest("pricePerUnit must be greater than zero.");
         }
 
         var bid = await _db.Bids.Include(b => b.Product).FirstOrDefaultAsync(b => b.Id == id);
@@ -233,19 +323,76 @@ public class BidsController : ControllerBase
             return NotFound();
         }
 
-        var isAdmin = User.IsInRole("Admin");
-        if (!isAdmin && bid.Product.PharmacyId != user.PharmacyId)
+        var (user, isBuyer, isSeller, isTheirTurn) = await ResolvePartyAsync(bid);
+        if (user is null)
         {
             return Forbid();
         }
 
-        if (bid.Status != BidStatus.Pending)
+        if (bid.Status is not (BidStatus.Pending or BidStatus.CounteredBySeller or BidStatus.CounteredByBuyer))
         {
-            return BadRequest("Only pending bids can be rejected.");
+            return BadRequest("This bid is not open for a counter-offer.");
         }
 
-        bid.Status = BidStatus.Rejected;
-        bid.RejectionReason = request.Reason;
+        if (!isTheirTurn)
+        {
+            return Forbid();
+        }
+
+        // Nothing is locked until a counter is actually accepted, so this
+        // checks against plain available stock, same as bid creation.
+        if (request.Quantity > bid.Product.AvailableQuantity)
+        {
+            return BadRequest($"Only {bid.Product.AvailableQuantity} units are available.");
+        }
+
+        var proposingParty = isSeller ? NegotiationParty.Seller : NegotiationParty.Buyer;
+
+        bid.OfferQuantity = request.Quantity;
+        bid.OfferPricePerUnit = request.PricePerUnit;
+        bid.Message = request.Message;
+        bid.LastProposedBy = proposingParty;
+        bid.Status = proposingParty == NegotiationParty.Seller ? BidStatus.CounteredBySeller : BidStatus.CounteredByBuyer;
+
+        _db.BidNegotiationRounds.Add(new BidNegotiationRound
+        {
+            BidId = bid.Id,
+            ProposedBy = proposingParty,
+            ProposedByUserId = user.Id,
+            Quantity = request.Quantity,
+            PricePerUnit = request.PricePerUnit,
+            Message = request.Message
+        });
+
+        await _db.SaveChangesAsync();
+
+        return Ok(bid);
+    }
+
+    // Lets the buyer withdraw a negotiation that's still open, in either
+    // direction, without needing the seller to reject it first.
+    [HttpPost("{id}/cancel")]
+    public async Task<IActionResult> Cancel(string id)
+    {
+        var user = await _userManager.GetUserAsync(User);
+        var bid = await _db.Bids.FindAsync(id);
+
+        if (bid is null)
+        {
+            return NotFound();
+        }
+
+        if (user?.PharmacyId != bid.BuyerPharmacyId)
+        {
+            return Forbid();
+        }
+
+        if (bid.Status is not (BidStatus.Pending or BidStatus.CounteredBySeller or BidStatus.CounteredByBuyer))
+        {
+            return BadRequest("This bid is not open to cancel.");
+        }
+
+        bid.Status = BidStatus.Cancelled;
         bid.DecidedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 

@@ -16,6 +16,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<Bid> Bids => Set<Bid>();
+    public DbSet<BidNegotiationRound> BidNegotiationRounds => Set<BidNegotiationRound>();
     public DbSet<Order> Orders => Set<Order>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -114,6 +115,23 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(b => b.ProductId);
             entity.HasIndex(b => b.BuyerPharmacyId);
             entity.HasIndex(b => b.Status);
+        });
+
+        builder.Entity<BidNegotiationRound>(entity =>
+        {
+            entity.Property(r => r.ProposedBy).HasConversion<string>().HasMaxLength(16);
+
+            entity.HasOne(r => r.Bid)
+                .WithMany(b => b.NegotiationRounds)
+                .HasForeignKey(r => r.BidId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(r => r.ProposedByUser)
+                .WithMany()
+                .HasForeignKey(r => r.ProposedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(r => r.BidId);
         });
 
         builder.Entity<Order>(entity =>
