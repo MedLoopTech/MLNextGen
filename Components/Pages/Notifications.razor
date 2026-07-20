@@ -1,0 +1,140 @@
+@page "/notifications"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject UserManager<ApplicationUser> UserManager
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Notifications — MedLoop NextGen</PageTitle>
+
+<div class="page-header d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+    <div>
+        <h3 class="mb-1">Notifications</h3>
+        <p class="text-muted mb-0">Bid activity, order updates, and disputes across your pharmacy.</p>
+    </div>
+    @if (_notifications.Any(n => !n.IsRead))
+    {
+        <button class="btn btn-outline-primary btn-sm" disabled="@_busy" @onclick="MarkAllRead">Mark all as read</button>
+    }
+</div>
+
+@if (_loading)
+{
+    <LoadingIndicator Text="Loading notifications…" />
+}
+else if (_notifications.Count == 0)
+{
+    <div class="ml-panel card">
+        <EmptyState Icon="🔔" Title="Nothing here yet"
+                    Subtitle="You'll be notified when a bid lands on one of your listings or a deal you're part of moves forward." />
+    </div>
+}
+else
+{
+    <div class="ml-panel card">
+        <ul class="list-group list-group-flush">
+            @foreach (var n in _notifications)
+            {
+                <li class="list-group-item d-flex justify-content-between align-items-start gap-3 @(n.IsRead ? "" : "notification-unread")">
+                    <div>
+                        <div class="d-flex align-items-center gap-2">
+                            @if (!n.IsRead)
+                            {
+                                <span class="unread-dot" aria-label="Unread"></span>
+                            }
+                            <span class="fw-semibold">@n.Title</span>
+                        </div>
+                        <div class="text-muted">@n.Body</div>
+                        <div class="small text-muted mt-1">@n.CreatedAt.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                    </div>
+                    @if (!n.IsRead)
+                    {
+                        <button class="btn btn-sm btn-outline-secondary flex-shrink-0" disabled="@_busy"
+                                @onclick="() => MarkRead(n)">Mark read</button>
+                    }
+                </li>
+            }
+        </ul>
+    </div>
+}
+
+@code {
+    private List<Notification> _notifications = new();
+    private bool _loading = true;
+    private bool _busy;
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    private ApplicationUser? _user;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState!;
+        _user = await UserManager.GetUserAsync(authState.User);
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        if (_user is null)
+        {
+            _loading = false;
+            return;
+        }
+
+        // Same scoping rule as NotificationsController.Mine: only ever the
+        // calling user's own notifications. AsNoTracking is load-bearing,
+        // not an optimization: MarkAllRead uses ExecuteUpdateAsync, which
+        // bypasses the change tracker — a tracked re-query would hand back
+        // the stale pre-update instances from the identity map, and the
+        // page would keep showing rows as unread that the database (and the
+        // navbar badge) already know are read.
+        _notifications = await Db.Notifications
+            .AsNoTracking()
+            .Where(n => n.RecipientUserId == _user.Id)
+            .OrderByDescending(n => n.CreatedAt)
+            .Take(100)
+            .ToListAsync();
+
+        _loading = false;
+    }
+
+    private async Task MarkRead(Notification n)
+    {
+        if (_busy || _user is null) return;
+        _busy = true;
+        try
+        {
+            var fresh = await Db.Notifications
+                .FirstOrDefaultAsync(x => x.Id == n.Id && x.RecipientUserId == _user.Id);
+            if (fresh is not null && !fresh.IsRead)
+            {
+                fresh.IsRead = true;
+                await Db.SaveChangesAsync();
+            }
+            await Reload();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task MarkAllRead()
+    {
+        if (_busy || _user is null) return;
+        _busy = true;
+        try
+        {
+            await Db.Notifications
+                .Where(n => n.RecipientUserId == _user.Id && !n.IsRead)
+                .ExecuteUpdateAsync(s => s.SetProperty(n => n.IsRead, true));
+            await Reload();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

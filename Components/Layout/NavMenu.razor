@@ -1,3 +1,7 @@
+@inject IServiceScopeFactory ScopeFactory
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.DependencyInjection
+
 <nav class="navbar navbar-expand-lg navbar-dark ml-navbar px-3">
     <a class="navbar-brand d-flex align-items-center" href="/">
         <span class="brand-mark" aria-hidden="true">M</span>
@@ -27,6 +31,17 @@
         <ul class="navbar-nav align-items-lg-center">
             <AuthorizeView>
                 <Authorized>
+                    <li class="nav-item">
+                        <NavLink class="nav-link position-relative me-lg-2" href="/notifications" aria-label="Notifications">
+                            <span aria-hidden="true">🔔</span>
+                            @if (_unreadCount > 0)
+                            {
+                                <span class="notification-badge badge rounded-pill">
+                                    @(_unreadCount > 9 ? "9+" : _unreadCount.ToString())
+                                </span>
+                            }
+                        </NavLink>
+                    </li>
                     <li class="nav-item me-lg-3 py-2 py-lg-0">
                         <span class="text-light opacity-75 small">@context.User.Identity?.Name</span>
                     </li>
@@ -47,3 +62,50 @@
         </ul>
     </div>
 </nav>
+
+@code {
+    private int _unreadCount;
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is null)
+        {
+            return;
+        }
+
+        var authState = await AuthState;
+        if (authState.User.Identity?.IsAuthenticated != true)
+        {
+            return;
+        }
+
+        try
+        {
+            // A dedicated scope, not the request's own AppDbContext: this
+            // navbar renders alongside page components whose own queries can
+            // interleave with this one during prerender, and a single scoped
+            // DbContext instance does not allow two concurrent operations
+            // ("a second operation was started on this context").
+            using var scope = ScopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+            var userId = userManager.GetUserId(authState.User);
+            if (userId is not null)
+            {
+                _unreadCount = await db.Notifications
+                    .CountAsync(n => n.RecipientUserId == userId && !n.IsRead);
+            }
+        }
+        catch
+        {
+            // The bell is auxiliary — a failed count must never take down
+            // every page that renders the navbar. Worst case it shows no
+            // badge until the next navigation.
+            _unreadCount = 0;
+        }
+    }
+}

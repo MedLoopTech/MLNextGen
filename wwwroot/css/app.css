@@ -197,6 +197,32 @@
     opacity: 0.5;
 }
 
+/* ---- Notifications ---- */
+
+.notification-badge {
+    position: absolute;
+    top: 0.1rem;
+    right: -0.15rem;
+    background: var(--ml-accent);
+    color: #14323c;
+    font-size: 0.62rem;
+    font-weight: 800;
+    padding: 0.25em 0.45em;
+}
+
+.notification-unread {
+    background: var(--ml-brand-light);
+}
+
+.unread-dot {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--ml-brand);
+    flex: none;
+}
+
 /* ---- Expiry urgency ---- */
 
 .expiry-soon {
